@@ -34,12 +34,14 @@ class ReadGroupGenotyper( object ):
     
     #TODO: make these filters defined generically
     def __init__( self, bam_readers=None, reference_sequence_filename=None, dtype=None, min_support_depth=None, 
-                  min_base_quality=None, min_mapping_quality=None, restrict_regions=None ):
+                  min_base_quality=None, min_mapping_quality=None, restrict_regions=None, use_strand=False ):
         self._read_groups = odict() #order important?
         self._sample_names = []
         self._sequence_lengths = odict()
         self._read_group_coverage = {}#odcit()
+        self._read_group_coverage_reverse = {}
         self._no_read_group_coverage = None#odcit()
+        self._no_read_group_coverage_reverse = None
         self._has_no_read_groups = False
         self._reference_name = None
         self._reference_sequence_filename = reference_sequence_filename
@@ -56,6 +58,7 @@ class ReadGroupGenotyper( object ):
         self._readers = []
         for bam_reader in bam_readers:
             self.add_reader( bam_reader ) #(reader, buffered block)
+        self._use_strand = use_strand
         #filters:
         self._min_support_depth = min_support_depth or 0
         self._min_base_quality = min_base_quality
@@ -96,17 +99,37 @@ class ReadGroupGenotyper( object ):
         if self._restrict_regions.region_overlaps( self._reference_name, position, end_position, empty_default=True ):
             if read.get_mapq >= self._min_mapping_quality:
                 rg_name = read.get_read_group()
-                if rg_name and self._read_group_coverage.get( rg_name, None ) is None:
-                    self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
-                if not rg_name and self._no_read_group_coverage is None:
-                    self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
                 if rg_name:
-                    coverage = self._read_group_coverage[ rg_name ]
+                    if self._use_strand:
+                        if read.is_seq_reverse_complement():
+                            coverage = self._read_group_coverage_reverse.get( rg_name, None )
+                            if coverage is None:
+                                coverage = self._read_group_coverage_reverse[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
+                        else:
+                            coverage = self._read_group_coverage.get( rg_name, None )
+                            if coverage is None:
+                                coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
+                    else:
+                        coverage = self._read_group_coverage.get( rg_name, None )
+                        if coverage is None:
+                            coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
                 else:
-                    coverage = self._no_read_group_coverage
+                    if self._use_strand:
+                        if read.is_seq_reverse_complement():
+                            coverage = self._no_read_group_coverage_reverse
+                            if coverage is None:
+                                coverage = self._no_read_group_coverage_reverse = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
+                        else:
+                            coverage = self._no_read_group_coverage
+                            if coverage is None:
+                                coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
+                    else:
+                        coverage = self._no_read_group_coverage
+                        if coverage is None:
+                            coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
                 coverage.add_read( read, min_base_quality=self._min_base_quality )
                 
-                self._covered_regions.add_region( ( self._reference_name, position, end_position ) )
+                self._covered_regions.add_region( ( self._reference_name, position, end_position ) ) #store overlap for faster iteration over coverage
     
     def _buffer_readers( self, condition=False ):
         readers = []
@@ -129,19 +152,29 @@ class ReadGroupGenotyper( object ):
                 print 'coverage', region_name, region_start, region_end
                 for i in xrange( region_start, region_end ):
                     coverage = odict()
+                    coverage_reverse = odict()
                     if self._read_group_coverage:
                         for rg_name in self._read_groups.keys():
-                            cov = self._read_group_coverage.get( rg_name )
+                            cov = self._read_group_coverage.get( rg_name, None )
                             if cov:
                                 cov = cov.get( i )
                                 if cov:
                                     coverage[ rg_name ] = cov
+                            cov_reverse = self._read_group_coverage_reverse.get( rg_name, None )
+                            if cov_reverse:
+                                cov_reverse = cov_reverse.get( i )
+                                if cov_reverse:
+                                    coverage_reverse[ rg_name ] = cov_reverse
                     if self._no_read_group_coverage:
                         cov = self._no_read_group_coverage.get( i )
                         if cov:
                             coverage[ SAM_NO_READ_GROUP_NAME ] = cov
-                    if coverage:
-                        yield self._reference_name, i, coverage
+                    if self._no_read_group_coverage_reverse:
+                        cov = self._no_read_group_coverage_reverse.get( i )
+                        if cov:
+                            coverage_reverse[ SAM_NO_READ_GROUP_NAME ] = cov
+                    if coverage or coverage_reverse:
+                        yield self._reference_name, i, ( coverage, coverage_reverse )
     def iter_coverage( self ):
         sequence_names = self._sequence_lengths.keys()
         read_no_ref_filter = lambda x: True if x.get_reference_id() >= 0 else False
@@ -159,6 +192,8 @@ class ReadGroupGenotyper( object ):
                 #reset values
                 self._read_group_coverage = {}#odict()
                 self._no_read_group_coverage = None
+                self._read_group_coverage_reverse = {}#odict()
+                self._no_read_group_coverage_reverse = None
                 #CONFIRM NOT NEED TO RESET THIS: self._restrict_regions = NamedRegionOverlap( self._sequence_lengths, regions=self._restrict_regions_list ) # reset to initial values
                 self._covered_regions = NamedRegionOverlap( self._sequence_lengths )
             self._reference_name = next_reference_name
@@ -172,6 +207,11 @@ class ReadGroupGenotyper( object ):
         #flush remaining coverage
         for v in self._iter_current_coverage():
             yield v
+        #reset values
+        self._read_group_coverage = {}#odict()
+        self._no_read_group_coverage = None
+        self._read_group_coverage_reverse = {}#odict()
+        self._no_read_group_coverage_reverse = None
     def iter_vcf( self, ploidy=2, variants_only=False, command_line=None, info_fields=['AC','AF'], format_fields=['GT', 'AC', 'AF', 'NC']  ):
         #http://www.1000genomes.org/wiki/Analysis/Variant%20Call%20Format/vcf-variant-call-format-version-41
         # move these consts
@@ -202,10 +242,10 @@ class ReadGroupGenotyper( object ):
         for sample in samples:
             header = "%s\t%s" % ( header, sample )
         yield header
-        for seq_name, pos, nucs in self.iter_coverage():
+        for seq_name, pos, ( nucs, nucs_reverse ) in self.iter_coverage():
             id = VCF_NO_VALUE
             ref = self._get_ref_allele_for_position( seq_name, pos )
-            indeled_ref, alt_tuples = self._calculate_allele_coverage( nucs.values(), ref, position=pos, sequence_name=seq_name, skip_list=ref, min_support_depth=self._min_support_depth )
+            indeled_ref, alt_tuples = self._calculate_allele_coverage( nucs.values(), nucs_reverse.values() , ref, position=pos, sequence_name=seq_name, skip_list=ref, min_support_depth=self._min_support_depth )
             alt = map( lambda x: x[0], alt_tuples )
             if variants_only:
                 no_alt = True
@@ -220,8 +260,12 @@ class ReadGroupGenotyper( object ):
             fields = [ seq_name, str( pos + 1 ), id, indeled_ref, ','.join( alt ) or VCF_NO_VALUE, qual, filter ]
             
             samples_dict = self._coverage_by_sample_from_dict( samples, nucs, ref )
+            if nucs_reverse:
+                sample_dict_reverse = self._coverage_by_sample_from_dict( samples, nucs_reverse, ref )
+            else:
+                sample_dict_reverse = odict()
             
-            info, format = self._get_info_format_value_fields( samples, samples_dict, ref, alt, indeled_ref, info_fields=info_fields, format_fields=format_fields, ploidy=ploidy, min_support_depth=self._min_support_depth )
+            info, format = self._get_info_format_value_fields( samples, samples_dict, sample_dict_reverse, ref, alt, indeled_ref, info_fields=info_fields, format_fields=format_fields, ploidy=ploidy, min_support_depth=self._min_support_depth )
             
             
             fields.append( VCF_INFO_FIELD_SEPARATOR.join( info ) or VCF_NO_VALUE )
@@ -297,9 +341,13 @@ class ReadGroupGenotyper( object ):
             rval.append( ( name, value) )
         return reference_nucleotide, rval
     
-    def _calculate_allele_coverage( self, coverages, reference_nucleotide, position=None, sequence_name=None, skip_list = None, min_support_depth=None ):
+    def _calculate_allele_coverage( self, coverages, coverages_reverse, reference_nucleotide, position=None, sequence_name=None, skip_list = None, min_support_depth=None ):
         if not isinstance( coverages, list ):
             coverages = [ coverages ]
+        if coverages_reverse:
+            if not isinstance( coverages_reverse, list ):
+                coverages_reverse = [ coverages_reverse ]
+            coverages.extend( coverages_reverse )
         if not isinstance( skip_list, list ):
             if skip_list is None:
                 skip_list = []
@@ -350,7 +398,7 @@ class ReadGroupGenotyper( object ):
         
     def _get_ref_allele_for_position( self, sequence_name, position, length=1 ):
         return self._reference_sequences.get_sequence_by_position( sequence_name, position, length=length, unknown_sequence_character=VCF_NO_VALUE )
-    def _get_info_format_value_fields( self, samples, samples_dict, ref, alt, indeled_ref, info_fields=['AC','AF'], format_fields=['GT', 'AC', 'AF', 'NC'], ploidy=2, min_support_depth=None ):
+    def _get_info_format_value_fields( self, samples, samples_dict, samples_dict_reverse, ref, alt, indeled_ref, info_fields=['AC','AF'], format_fields=['GT', 'AC', 'AF', 'NC'], ploidy=2, min_support_depth=None ):
         gt_no_value = VCF_GT_PHASED_SEPARATOR[False].join( [ VCF_NO_VALUE for i in range( ploidy ) ] )
         ac_af_no_value = ",".join( [ VCF_NO_VALUE for i in range( len( alt ) ) ] )
         ref_list = [indeled_ref]
@@ -361,19 +409,34 @@ class ReadGroupGenotyper( object ):
         all_alt_nucs_count = [0] * len( alt_list )
         all_nucs_count = 0
         format = []
+        
+        #move these 3 out, for faster?
+        len_old_reference_nucleotide = len( ref )
+        len_reference_nucleotide = len( indeled_ref )
+        max_deletion_len = len_reference_nucleotide - len_old_reference_nucleotide
+        
         for sample in samples:
             sample_format = []
-            if sample in samples_dict:
-                coverage_dict = samples_dict[sample]
+            if sample in samples_dict or sample in samples_dict_reverse:
+                coverage_dict = samples_dict.get( sample, {} )
+                coverage_dict_reverse = samples_dict_reverse.get( sample, {} )
+                
+                genotyping_coverage_dict = dict( coverage_dict )
+                for nuc, count in coverage_dict_reverse.iteritems():
+                    genotyping_coverage_dict[ nuc ] = genotyping_coverage_dict.get( nuc, 0 ) + count
+                
                 if min_support_depth is None:
                     min_support_depth = 0
-                nucs = sorted( map( lambda x: ( x[1], x[0] ), coverage_dict.iteritems() ), reverse=True )#list of count, nuc
+                nucs = sorted( map( lambda x: ( x[1], x[0] ), genotyping_coverage_dict.iteritems() ), reverse=True )#list of count, nuc
+                #nucs_reverse = sorted( map( lambda x: ( x[1], x[0] ), coverage_dict_reverse.iteritems() ), reverse=True )#list of count, nuc
                 #nucs = filter( lambda x: not isinstance( x[0], list ), nucs ) #filter out indels for now. FIXME: add sort by len or int count to allow indels here
                 #resolve indels
                 indeled_nucs = []
-                len_old_reference_nucleotide = len( ref )
-                len_reference_nucleotide = len( indeled_ref )
-                max_deletion_len = len_reference_nucleotide - len_old_reference_nucleotide
+                
+                
+                
+                #### below here should make a combined dict for genotyping here, then do both for the raw nuc counts
+                
                 nucs_sum = 0
                 for value, name in nucs:
                     if value >= min_support_depth:
@@ -407,11 +470,21 @@ class ReadGroupGenotyper( object ):
                         continue #this is ref allele
                 #NC
                 nc_field = "" #"%s:" % fields[-1]
+                if self._use_strand:
+                    prefix = '+'
+                else:
+                    prefix = ''
                 for c, count in coverage_dict.iteritems():
                     if count:#should we filter by self._min_support_dept here? or display all
                         if isinstance( c, int ):
                             c = 'd%s' % c
-                        nc_field = "%s%s-%s," % ( nc_field, c, count )
+                        nc_field = "%s%s%s-%s," % ( nc_field, prefix, c, count )
+                prefix = '-'
+                for c, count in coverage_dict_reverse.iteritems():
+                    if count:#should we filter by self._min_support_dept here? or display all
+                        if isinstance( c, int ):
+                            c = 'd%s' % c
+                        nc_field = "%s%s%s-%s," % ( nc_field, prefix, c, count )
                 
                 gt_possible = ref_list + alt_list
                 calls = []

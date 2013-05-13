@@ -1,7 +1,7 @@
 import sys
 
 if sys.version_info < (2, 5):
-    print >> sys.stderr, "ERROR: pyBamParser requires python 2.5 or greater"
+    print >> sys.stderr, "ERROR: pyBamTools requires python 2.5 or greater"
     sys.exit()
 
 # Automatically download setuptools if not available
@@ -17,7 +17,7 @@ if sys.version_info >= (3,):
 
        
 def main():
-    setup(  name = "pyBamParser",
+    setup(  name = "pyBamTools",
             version = "0.0.1",
             packages = find_packages( 'lib' ),
             package_dir = { '': 'lib' },

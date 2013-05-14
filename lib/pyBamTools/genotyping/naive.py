@@ -1,5 +1,6 @@
 #Dan Blankenberg
 import string
+from datetime import date
 
 import numpy
 
@@ -215,9 +216,8 @@ class ReadGroupGenotyper( object ):
     def iter_vcf( self, ploidy=2, variants_only=False, command_line=None, info_fields=['AC','AF'], format_fields=['GT', 'AC', 'AF', 'NC']  ):
         #http://www.1000genomes.org/wiki/Analysis/Variant%20Call%20Format/vcf-variant-call-format-version-41
         # move these consts
-        
         #output header
-        header = '##fileformat=%s\n##fileDate=%s\n##source=%s\n##reference=file://%s\n' % ( 'VCFv4.1', '?0', 'Dan', self._reference_sequence_filename )
+        header = '##fileformat=%s\n##fileDate=%s\n##source=%s\n##reference=file://%s\n' % ( 'VCFv4.1', date.today().strftime( '%Y%m%d' ), 'Dan', self._reference_sequence_filename )
         if 'AC' in info_fields:
             header += '##INFO=<ID=AC,Number=A,Type=Integer,Description="Allele count in genotypes, for each ALT allele, in the same order as listed">\n'
         if 'AF' in info_fields:
@@ -478,13 +478,13 @@ class ReadGroupGenotyper( object ):
                     if count:#should we filter by self._min_support_dept here? or display all
                         if isinstance( c, int ):
                             c = '%sd%s' % ( prefix, c )
-                        nc_field = "%s%s%s-%s," % ( nc_field, prefix, c, count )
+                        nc_field = "%s%s%s=%s," % ( nc_field, prefix, c, count )
                 prefix = '-'
                 for c, count in coverage_dict_reverse.iteritems():
                     if count:#should we filter by self._min_support_dept here? or display all
                         if isinstance( c, int ):
                             c = '%sd%s' % ( prefix, c )
-                        nc_field = "%s%s%s-%s," % ( nc_field, prefix, c, count )
+                        nc_field = "%s%s%s=%s," % ( nc_field, prefix, c, count )
                 
                 gt_possible = ref_list + alt_list
                 calls = []

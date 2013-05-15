@@ -29,6 +29,10 @@ class NamedRegionOverlap( object ):
                 del self._regions[ region ]
         else:
             region_name, region_start, region_end = region
+            if region_start >= self._sequence_lengths[ region_name ]:
+                return #start is before end of sequence, can't add anything
+            region_start = max( region_start, 0 ) #no neg region starts
+            region_end = min( region_end, self._sequence_lengths[ region_name ] ) #region maxes out at length of sequence
             if region_name not in self._complete_regions:
                 if region_name not in self._regions:
                     self._regions[ region_name ] = self._coverage_array = numpy.zeros( ( self._sequence_lengths[ region_name ] ), dtype=numpy.bool )

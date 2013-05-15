@@ -94,7 +94,7 @@ class SequenceCoverage( object ):
         return self._coverage_array[ position ]
     def set( self, position, value ):
         if 0 < position >= self._size:
-            print >>sys.stderr, 'Warning: setting coverage of out of bounds (size=%s) position has been requested: %s. This information has been ignored.' % ( self._size, position )
+            print >>sys.stderr, 'Warning: setting coverage of out of bounds (size=%s) position has been requested: %s to be set to %s. This information has been ignored.' % ( self._size, position, value )
             return
         try:
             self._coverage_array[ position ] = value
@@ -143,7 +143,7 @@ class NucleotideCoverage( object ):
                         last_cov = None
                         last_cov_pos = None
                     else:
-                        cov.set( j, cov.get( j ) + 1 )
+                        cov.set( j, cov.get( j, 0 ) + 1 )
                         last_cov = cov
                         last_cov_pos = j
                 position_offset += cigar_size
@@ -166,7 +166,7 @@ class NucleotideCoverage( object ):
                     if self._indel_offset and last_cov_pos == i:
                         #was cov.
                         #print >>sys.stderr, i, read.to_sam(), ',' , cigar
-                        last_cov.set( i, last_cov.get( i ) - 1 ) #decrement coverage here, because the insertion fills it in
+                        last_cov.set( i, last_cov.get( i, 0 ) - 1 ) #decrement coverage here, because the insertion fills it in
                 sequence = sequence[cigar_size:]
                 quality = quality[cigar_size:]
                 last_cov = None
@@ -188,7 +188,7 @@ class NucleotideCoverage( object ):
                 if self._indel_offset and last_cov_pos == i:
                     #was cov.
                     #print >>sys.stderr, i, read.to_sam(), ',' , cigar
-                    last_cov.set( i, last_cov.get( i ) - 1 ) #decrement coverage here, because the deletion fills it in
+                    last_cov.set( i, last_cov.get( i, 0 ) - 1 ) #decrement coverage here, because the deletion fills it in
                 last_cov = None
                 last_cov_pos = None
             elif cigar_op == 3: #N skipped region from the reference

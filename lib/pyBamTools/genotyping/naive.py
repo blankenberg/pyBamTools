@@ -35,7 +35,7 @@ class ReadGroupGenotyper( object ):
     
     #TODO: make these filters defined generically
     def __init__( self, bam_readers=None, reference_sequence_filename=None, dtype=None, min_support_depth=None, 
-                  min_base_quality=None, min_mapping_quality=None, restrict_regions=None, use_strand=False ):
+                  min_base_quality=None, min_mapping_quality=None, restrict_regions=None, use_strand=False, allow_out_of_bounds_positions=False ):
         self._read_groups = odict() #order important?
         self._sample_names = []
         self._sequence_lengths = odict()
@@ -69,7 +69,7 @@ class ReadGroupGenotyper( object ):
         self._restrict_regions_list = restrict_regions
         self._restrict_regions = NamedRegionOverlap( self._sequence_lengths, regions=self._restrict_regions_list )
         self._covered_regions = NamedRegionOverlap( self._sequence_lengths )
-            
+        self._allow_out_of_bounds_positions = allow_out_of_bounds_positions
         
     def add_reader( self, bam_reader ):
         self._readers.append( ( bam_reader, None ) ) #(reader, buffered read)
@@ -244,7 +244,7 @@ class ReadGroupGenotyper( object ):
         yield header
         for seq_name, pos, ( nucs, nucs_reverse ) in self.iter_coverage():
             id = VCF_NO_VALUE
-            ref = self._get_ref_allele_for_position( seq_name, pos )
+            ref = self._get_ref_allele_for_position( seq_name, pos, die_on_error = not self._allow_out_of_bounds_positions )
             indeled_ref, alt_tuples = self._calculate_allele_coverage( nucs.values(), nucs_reverse.values() , ref, position=pos, sequence_name=seq_name, skip_list=ref, min_support_depth=self._min_support_depth )
             alt = map( lambda x: x[0], alt_tuples )
             if variants_only:
@@ -327,7 +327,7 @@ class ReadGroupGenotyper( object ):
                     max_delete_size = max( max_delete_size, name )
         len_old_reference_nucleotide = len( reference_nucleotide )
         if max_delete_size:
-            reference_nucleotide = self._get_ref_allele_for_position( sequence_name, position, length=max_delete_size+1 )
+            reference_nucleotide = self._get_ref_allele_for_position( sequence_name, position, length=max_delete_size+1, die_on_error = not self._allow_out_of_bounds_positions )
         rval = []
         for name, value in coverage:
             if isinstance( name, int ):
@@ -396,8 +396,8 @@ class ReadGroupGenotyper( object ):
             reference_nucleotide, coverage = self._rework_indels( coverage, reference_nucleotide, insertion_count, deletion_count, position, sequence_name )
         return ( reference_nucleotide, coverage )
         
-    def _get_ref_allele_for_position( self, sequence_name, position, length=1 ):
-        return self._reference_sequences.get_sequence_by_position( sequence_name, position, length=length, unknown_sequence_character=VCF_NO_VALUE )
+    def _get_ref_allele_for_position( self, sequence_name, position, length=1, die_on_error=True ):
+        return self._reference_sequences.get_sequence_by_position( sequence_name, position, length=length, unknown_sequence_character=VCF_NO_VALUE, die_on_error=die_on_error )
     def _get_info_format_value_fields( self, samples, samples_dict, samples_dict_reverse, ref, alt, indeled_ref, info_fields=['AC','AF'], format_fields=['GT', 'AC', 'AF', 'NC'], ploidy=2, min_support_depth=None ):
         gt_no_value = VCF_GT_PHASED_SEPARATOR[False].join( [ VCF_NO_VALUE for i in range( ploidy ) ] )
         ac_af_no_value = ",".join( [ VCF_NO_VALUE for i in range( len( alt ) ) ] )

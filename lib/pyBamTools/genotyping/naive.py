@@ -478,13 +478,13 @@ class ReadGroupGenotyper( object ):
                     if count:#should we filter by self._min_support_dept here? or display all
                         if isinstance( c, int ):
                             c = 'd%s' % ( c )
-                        nc_field = "%s%s%s=%s," % ( nc_field, prefix, c, count )
+                        nc_field = "%s%s%s=%d," % ( nc_field, prefix, c, count )
                 prefix = '-'
                 for c, count in coverage_dict_reverse.iteritems():
                     if count:#should we filter by self._min_support_dept here? or display all
                         if isinstance( c, int ):
                             c = 'd%s' % ( c )
-                        nc_field = "%s%s%s=%s," % ( nc_field, prefix, c, count )
+                        nc_field = "%s%s%s=%d," % ( nc_field, prefix, c, count )
                 
                 gt_possible = ref_list + alt_list
                 calls = []

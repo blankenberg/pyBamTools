@@ -99,11 +99,12 @@ class SequenceCoverage( object ):
     def set( self, position, value ):
         if 0 < position >= self._size:
             print >>sys.stderr, 'Warning: setting coverage of out of bounds (size=%s) position has been requested: %s to be set to %s. This information has been ignored.' % ( self._size, position, value )
-            return
+            return None
         try:
             self._coverage_array[ position ] = value
         except OverflowError:
             print >> sys.stderr, "Value of %i at position %i is too large to fit into array, keeping current value (%i)." % ( value, position, self._coverage_array[ position ] )
+        return self._coverage_array[ position ]
     def sum( self, beg=None, end=None ):
         if beg == end == None:
             return self._coverage_array.sum()
@@ -112,30 +113,26 @@ class SequenceCoverage( object ):
 
 class NucleotideCoverage( object ):
     
-    def __init__( self, size=DEFAULT_SEQUENCE_LENGTH, dtype=numpy.uint8, indel_offset=0, reference_name=None ):
+    def __init__( self, size=DEFAULT_SEQUENCE_LENGTH, dtype=numpy.uint8, reference_name=None ): 
         self._nucleotide_dict = {}
         self.size = size
         for nuc in NUCLEOTIDES_UPPER + [ UNKNOWN_NUCLEOTIDE_NAME ]:
             self._nucleotide_dict[ nuc ] = SequenceCoverage( size, dtype=dtype )
         self._insert_dict = {}
         self._delete_dict = {}
-        self._indel_offset = indel_offset
         self._reference_name = reference_name
     def add_read( self, read, min_base_quality=None, die_on_error=False ):
         position = read.get_position( one_based=False )
         sequence = list( read.get_seq() )
         quality = list(read.get_qual_tuple())
-        cigar = read.get_cigar() #CIGAR_OP = list( 'MIDNSHP=X' )
+        cigar = read.get_cigar()
         position_offset = 0
-        last_cov = None
-        last_cov_pos = None #this is kind of wonky
         while cigar:
             cigar_size, cigar_op = cigar.pop( 0 )
             if cigar_op in [ 0, 7, 8 ]: 
                 #M alignment match (can be a sequence match or mismatch); = sequence match; x sequence mismatch
                 #= sequence match
                 #X sequence mismatch
-                #print 'doing Match', cigar_op, cigar_size
                 for i in range( cigar_size ):
                     nuc = sequence.pop( 0 ).upper()
                     cov = self._nucleotide_dict.get( nuc, None )
@@ -143,18 +140,14 @@ class NucleotideCoverage( object ):
                         cov = self._nucleotide_dict[ UNKNOWN_NUCLEOTIDE_NAME ]
                     j = position + position_offset + i
                     base_quality = quality.pop(0)
-                    if min_base_quality is not None and base_quality < min_base_quality:
-                        last_cov = None
-                        last_cov_pos = None
-                    else:
-                        cov.set( j, cov.get( j, 0 ) + 1 )
-                        last_cov = cov
-                        last_cov_pos = j
+                    if min_base_quality is None or min_base_quality >= base_quality:
+                        if cov.set( j, cov.get( j, 0 ) + 1 ) is None:
+                            print >> sys.stderr, "Error causing read:", read.to_sam()
                 position_offset += cigar_size
             elif cigar_op == 1: #I insertion to the reference
-                #print 'passing cigar_op insertion', cigar_op
-                #delete extra seqs
-                i = position + position_offset + self._indel_offset
+                #remove inserted seqs and qualities
+                #no change in position
+                i = position + position_offset
                 if i < 0:
                     #TODO: see if it is ok to wrap around...eg, -2 index as option for circ chromes
                     if die_on_error:
@@ -167,17 +160,11 @@ class NucleotideCoverage( object ):
                     if i not in self._insert_dict:
                         self._insert_dict[i] = []
                     self._insert_dict[i].append( ''.join( sequence[:cigar_size] ) )
-                    if self._indel_offset and last_cov_pos == i:
-                        #was cov.
-                        #print >>sys.stderr, i, read.to_sam(), ',' , cigar
-                        last_cov.set( i, last_cov.get( i, 0 ) - 1 ) #decrement coverage here, because the insertion fills it in
                 sequence = sequence[cigar_size:]
                 quality = quality[cigar_size:]
-                last_cov = None
-                last_cov_pos = None
             elif cigar_op == 2: #D deletion from the reference
-                #print 'passing cigar_op deletion', cigar_op
-                i = position + position_offset + self._indel_offset
+                #update position
+                i = position + position_offset
                 if i < 0:
                     #TODO: see if it is ok to wrap around...eg, -2 index as option for circ chromes
                     if die_on_error:
@@ -189,46 +176,20 @@ class NucleotideCoverage( object ):
                     self._delete_dict[i] = []
                 self._delete_dict[i].append( cigar_size )
                 position_offset += cigar_size
-                if self._indel_offset and last_cov_pos == i:
-                    #was cov.
-                    #print >>sys.stderr, i, read.to_sam(), ',' , cigar
-                    last_cov.set( i, last_cov.get( i, 0 ) - 1 ) #decrement coverage here, because the deletion fills it in
-                last_cov = None
-                last_cov_pos = None
             elif cigar_op == 3: #N skipped region from the reference
-                #print >>sys.stderr, 'passing cigar_op N skipped', cigar_op, cigar_size
-                #print >>sys.stderr, read.to_sam()
                 #just move along the position
                 position_offset += cigar_size
-                last_cov = None
-                last_cov_pos = None
             elif cigar_op == 4: #S soft clipping (clipped sequences present in SEQ)
-                #print >>sys.stderr, 'passing cigar_op soft clipping', cigar_op, cigar_size
-                #print >>sys.stderr, read.to_sam()
                 #Do not set coverage here
                 #Remove soft clipped sequence
-                #Move position
+                #Do not move position
                 sequence = sequence[cigar_size:]
                 quality = quality[cigar_size:]
-                position_offset += cigar_size
-                last_cov = None
-                last_cov_pos = None
             elif cigar_op == 5: #H hard clipping (clipped sequences NOT present in SEQ)
-                #print >>sys.stderr, 'passing cigar_op hard clipping', cigar_op, cigar_size
-                #print >>sys.stderr, read.to_sam()
-                #just move along the position
-                position_offset += cigar_size
-                last_cov = None
-                last_cov_pos = None
-            elif cigar_op == 6: #P padding (silent deletion from padded reference)
-                last_cov = None
-                last_cov_pos = None
+                #Do not move position
                 pass
-                #print >>sys.stderr, 'passing cigar_op padding', cigar_op, cigar_size
-                #print >>sys.stderr, read.to_sam()
-                #position of sequence vs ref has not changed, 
-                #do not change position_offset
-                #do not change sequence
+            elif cigar_op == 6: #P padding (silent deletion from padded reference)
+                pass
             else: #unknown cigar_op
                 if die_on_error:
                     raise ValueError( 'The cigar operation "%s" of size "%s" for the read below is unknown.\n%s)' % ( cigar_op, cigar_size, read ) )
@@ -242,16 +203,19 @@ class NucleotideCoverage( object ):
         return iter( self._coverage_array )
     def iteritems( self ):
         return self._nucleotide_dict.iteritems()
-    def get( self, position ):
+    def get( self, position, nucleotides=True, insertions=True, deletions=True ):
         nucs = {}
-        for nuc, cov in self.iteritems():
-            cov = cov.get( position )
-            if cov:
-                nucs[nuc] = cov
-        if position in self._delete_dict:
-            nucs[ DELETIONS_KWD ] = self._delete_dict[position]
-        if position in self._insert_dict:
-            nucs[ INSERTIONS_KWD ] = self._insert_dict[position]
+        if nucleotides:
+            for nuc, cov in self.iteritems():
+                cov = cov.get( position )
+                if cov:
+                    nucs[nuc] = cov
+        if deletions:
+            if position in self._delete_dict:
+                nucs[ DELETIONS_KWD ] = self._delete_dict[position]
+        if insertions:
+            if position in self._insert_dict:
+                nucs[ INSERTIONS_KWD ] = self._insert_dict[position]
         return nucs
     def set( self, position, value ):
         try:
@@ -263,14 +227,3 @@ class NucleotideCoverage( object ):
             nucs = self.get( i )
             if nucs:
                 yield i, nucs
-    def generate_pileup( self ):
-        piled = {}
-        for i in xrange( self.size ):
-            nucs = {}
-            for nuc, cov in self.iteritems():
-                cov = cov.get( i )
-                if cov:
-                    nucs[nuc] = cov
-            if nucs:
-                piled[ i ] = nucs
-        return piled

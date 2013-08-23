@@ -105,29 +105,29 @@ class ReadGroupGenotyper( object ):
                         if read.is_seq_reverse_complement():
                             coverage = self._read_group_coverage_reverse.get( rg_name, None )
                             if coverage is None:
-                                coverage = self._read_group_coverage_reverse[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
+                                coverage = self._read_group_coverage_reverse[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype )
                         else:
                             coverage = self._read_group_coverage.get( rg_name, None )
                             if coverage is None:
-                                coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
+                                coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype )
                     else:
                         coverage = self._read_group_coverage.get( rg_name, None )
                         if coverage is None:
-                            coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
+                            coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype )
                 else:
                     if self._use_strand:
                         if read.is_seq_reverse_complement():
                             coverage = self._no_read_group_coverage_reverse
                             if coverage is None:
-                                coverage = self._no_read_group_coverage_reverse = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
+                                coverage = self._no_read_group_coverage_reverse = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype )
                         else:
                             coverage = self._no_read_group_coverage
                             if coverage is None:
-                                coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
+                                coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype )
                     else:
                         coverage = self._no_read_group_coverage
                         if coverage is None:
-                            coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype, indel_offset=self.__INDEL_OFFSET__ )
+                            coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype )
                 coverage.add_read( read, min_base_quality=self._min_base_quality )
                 
                 self._covered_regions.add_region( ( self._reference_name, position, end_position ) ) #store overlap for faster iteration over coverage
@@ -158,20 +158,24 @@ class ReadGroupGenotyper( object ):
                         for rg_name in self._read_groups.keys():
                             cov = self._read_group_coverage.get( rg_name, None )
                             if cov:
-                                cov = cov.get( i )
-                                if cov:
-                                    coverage[ rg_name ] = cov
+                                cov_val = cov.get( i, insertions=False, deletions=False )
+                                cov_val.update( cov.get( i + self.__INDEL_OFFSET__, nucleotides=False ) )
+                                if cov_val:
+                                    coverage[ rg_name ] = cov_val
                             cov_reverse = self._read_group_coverage_reverse.get( rg_name, None )
                             if cov_reverse:
-                                cov_reverse = cov_reverse.get( i )
-                                if cov_reverse:
-                                    coverage_reverse[ rg_name ] = cov_reverse
+                                cov_reverse_val = cov_reverse.get( i, insertions=False, deletions=False )
+                                cov_reverse_val.update( cov_reverse.get( i + self.__INDEL_OFFSET__, nucleotides=False ) )
+                                if cov_reverse_val:
+                                    coverage_reverse[ rg_name ] = cov_reverse_val
                     if self._no_read_group_coverage:
-                        cov = self._no_read_group_coverage.get( i )
+                        cov = self._no_read_group_coverage.get( i, insertions=False, deletions=False )
+                        cov.update( self._no_read_group_coverage.get( i + self.__INDEL_OFFSET__, nucleotides=False ) )
                         if cov:
                             coverage[ SAM_NO_READ_GROUP_NAME ] = cov
                     if self._no_read_group_coverage_reverse:
-                        cov = self._no_read_group_coverage_reverse.get( i )
+                        cov = self._no_read_group_coverage_reverse.get( i, insertions=False, deletions=False )
+                        cov.update( self._no_read_group_coverage_reverse.get( i + self.__INDEL_OFFSET__, nucleotides=False ) )
                         if cov:
                             coverage_reverse[ SAM_NO_READ_GROUP_NAME ] = cov
                     if coverage or coverage_reverse:
@@ -544,5 +548,5 @@ class ReadGroupGenotyper( object ):
         return info, format
         
 class VCFReadGroupGenotyper( ReadGroupGenotyper ):
-    __INDEL_OFFSET__ = -1
+    __INDEL_OFFSET__ = 1
 

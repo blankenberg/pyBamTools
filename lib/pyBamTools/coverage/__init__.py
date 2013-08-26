@@ -140,7 +140,7 @@ class NucleotideCoverage( object ):
                         cov = self._nucleotide_dict[ UNKNOWN_NUCLEOTIDE_NAME ]
                     j = position + position_offset + i
                     base_quality = quality.pop(0)
-                    if min_base_quality is None or min_base_quality >= base_quality:
+                    if min_base_quality is None or base_quality >= min_base_quality:
                         if cov.set( j, cov.get( j, 0 ) + 1 ) is None:
                             print >> sys.stderr, "Error causing read:", read.to_sam()
                 position_offset += cigar_size

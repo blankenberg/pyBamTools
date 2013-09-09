@@ -1,6 +1,8 @@
 #Dan Blankenberg
 import string
+from sys import stderr
 from datetime import date
+from numbers import Number
 
 import numpy
 
@@ -250,7 +252,16 @@ class ReadGroupGenotyper( object ):
             id = VCF_NO_VALUE
             ref = self._get_ref_allele_for_position( seq_name, pos, die_on_error = not self._allow_out_of_bounds_positions )
             indeled_ref, alt_tuples = self._calculate_allele_coverage( nucs.values(), nucs_reverse.values() , ref, position=pos, sequence_name=seq_name, skip_list=ref, min_support_depth=self._min_support_depth )
-            alt = map( lambda x: x[0], alt_tuples )
+            #for now, lets to a special check for anything not having a string for a name:
+            # FIXME: clean this up after confirming fix
+            alt = []
+            for alt_name, alt_count in alt_tuples:
+                if isinstance( alt_name, basestring ):
+                    alt.append( alt_name )
+                else:
+                    print >>stderr, 'An alternate allele of invalid name "%s" was encountered having count "%s" at position "%s" and has been removed.' % ( alt_name, alt_count, pos )
+            #alt = map( lambda x: x[0], alt_tuples )
+            
             if variants_only:
                 no_alt = True
                 for an_alt in alt:
@@ -326,7 +337,7 @@ class ReadGroupGenotyper( object ):
             for name, value in coverage:
                 if not delete_remaining:
                     break
-                if isinstance( name, int ):
+                if isinstance( name, Number ):
                     delete_remaining -= 1
                     max_delete_size = max( max_delete_size, name )
         len_old_reference_nucleotide = len( reference_nucleotide )
@@ -334,7 +345,7 @@ class ReadGroupGenotyper( object ):
             reference_nucleotide = self._get_ref_allele_for_position( sequence_name, position, length=max_delete_size+1, die_on_error = not self._allow_out_of_bounds_positions )
         rval = []
         for name, value in coverage:
-            if isinstance( name, int ):
+            if isinstance( name, Number ):
                 #deletion
                 name = reference_nucleotide[:len_old_reference_nucleotide] + reference_nucleotide[ len_old_reference_nucleotide + name :] 
             elif len( name ) > 1:
@@ -342,7 +353,7 @@ class ReadGroupGenotyper( object ):
                 name = reference_nucleotide[:len_old_reference_nucleotide] + name[len_old_reference_nucleotide:] + reference_nucleotide[len_old_reference_nucleotide:]
             else:
                 name = name + reference_nucleotide[len_old_reference_nucleotide:]
-            rval.append( ( name, value) )
+            rval.append( ( name, value ) )
         return reference_nucleotide, rval
     
     def _calculate_allele_coverage( self, coverages, coverages_reverse, reference_nucleotide, position=None, sequence_name=None, skip_list = None, min_support_depth=None ):
@@ -362,41 +373,40 @@ class ReadGroupGenotyper( object ):
         deletion_count = 0
         for coverage in coverages:
             for nuc, cov in coverage.iteritems():
-                if isinstance( cov, list ):
-                    variants = {}
-                    for v in cov:
-                        #what todo for deletions
-                        if nuc == INSERTIONS_KWD:
-                            v = reference_nucleotide + v
-                            if v not in variants:
-                                insertion_count += True
-                        elif nuc == DELETIONS_KWD:
-                            if v not in variants:
-                                deletion_count += True
-                        #if nuc == __DELETIONS_KWD__:
-                        #    v = 'd:%v' % v
-                        variants[v] = variants.get( v, 0 ) + 1
-                    for v, cov in variants.iteritems():
-                        coverage_dict[v] = coverage_dict.get( v, 0 ) + cov
-                else:
-                #if not isinstance( cov, list ): #remove indels
-                    coverage_dict[nuc] = coverage_dict.get( nuc, 0 ) + cov
+                if not isinstance( cov, list ):
+                    cov = [cov]
+                variants = {}
+                for v in cov:
+                    #what todo for deletions
+                    if nuc == INSERTIONS_KWD:
+                        v = reference_nucleotide + v
+                        if v not in variants:
+                            insertion_count += 1
+                    elif nuc == DELETIONS_KWD:
+                        if v not in variants:
+                            deletion_count += 1
+                    #if nuc == __DELETIONS_KWD__:
+                    #    v = 'd:%v' % v
+                    variants[v] = variants.get( v, 0 ) + 1
+                for v, cov in variants.iteritems():
+                    coverage_dict[v] = coverage_dict.get( v, 0 ) + cov
         #filter by depth
         if min_support_depth:
             coverage_dict2 = {}
             for name, value in coverage_dict.iteritems():
                 if value >= min_support_depth:
                     coverage_dict2[name] = value
-                elif isinstance( name, int ):
+                elif isinstance( name, Number ):
                     deletion_count -= 1
                 elif len( name ) > 1:
                     insertion_count -= 1
             #coverage_dict = dict( filter( lambda x: x[1] >= min_support_depth, coverage_dict.iteritems() ) )
             coverage_dict = coverage_dict2
             del coverage_dict2
+        
         #do some filter on min coverage?
         coverage = [ ( x[1], x[0] ) for x in sorted( map( lambda x: ( x[1], x[0] ), coverage_dict.iteritems() ), reverse=True ) if x[1] not in skip_list ] #is ordering important?
-        if position and sequence_name and ( insertion_count or deletion_count ):
+        if position is not None and sequence_name and ( insertion_count or deletion_count ):
             reference_nucleotide, coverage = self._rework_indels( coverage, reference_nucleotide, insertion_count, deletion_count, position, sequence_name )
         return ( reference_nucleotide, coverage )
         
@@ -444,7 +454,7 @@ class ReadGroupGenotyper( object ):
                 nucs_sum = 0
                 for value, name in nucs:
                     if value >= min_support_depth:
-                        if isinstance( name, int ):
+                        if isinstance( name, Number ):
                             #deletion
                             name = indeled_ref[:len_old_reference_nucleotide] + indeled_ref[ len_old_reference_nucleotide + name :]
                         elif len( name ) > 1:
@@ -480,13 +490,13 @@ class ReadGroupGenotyper( object ):
                     prefix = ''
                 for c, count in coverage_dict.iteritems():
                     if count:#should we filter by self._min_support_dept here? or display all
-                        if isinstance( c, int ):
+                        if isinstance( c, Number ):
                             c = 'd%s' % ( c )
                         nc_field = "%s%s%s=%d," % ( nc_field, prefix, c, count )
                 prefix = '-'
                 for c, count in coverage_dict_reverse.iteritems():
                     if count:#should we filter by self._min_support_dept here? or display all
-                        if isinstance( c, int ):
+                        if isinstance( c, Number ):
                             c = 'd%s' % ( c )
                         nc_field = "%s%s%s=%d," % ( nc_field, prefix, c, count )
                 

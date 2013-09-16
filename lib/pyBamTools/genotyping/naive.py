@@ -375,23 +375,26 @@ class ReadGroupGenotyper( object ):
         deletion_count = 0
         for coverage in coverages:
             for nuc, cov in coverage.iteritems():
-                if not isinstance( cov, list ):
-                    cov = [cov]
-                variants = {}
-                for v in cov:
-                    #what todo for deletions
-                    if nuc == INSERTIONS_KWD:
-                        v = reference_nucleotide + v
-                        if v not in variants:
-                            insertion_count += 1
-                    elif nuc == DELETIONS_KWD:
-                        if v not in variants:
-                            deletion_count += 1
-                    #if nuc == __DELETIONS_KWD__:
-                    #    v = 'd:%v' % v
-                    variants[v] = variants.get( v, 0 ) + 1
-                for v, cov in variants.iteritems():
-                    coverage_dict[v] = coverage_dict.get( v, 0 ) + cov
+                if isinstance( cov, list ):
+                    #this is an indel
+                    variants = {}
+                    for v in cov:
+                        #what todo for deletions
+                        if nuc == INSERTIONS_KWD:
+                            v = reference_nucleotide + v
+                            if v not in variants:
+                                insertion_count += 1
+                        elif nuc == DELETIONS_KWD:
+                            if v not in variants:
+                                deletion_count += 1
+                        else:
+                            print >>sys.stderr, "An unreachable condition has been reached in _calculate_allele_coverage at position '%s'. coverages=%s. coverages_reverse=%s" % ( position, coverages, coverages_reverse )
+                        variants[v] = variants.get( v, 0 ) + 1
+                    for v, cov in variants.iteritems():
+                        coverage_dict[v] = coverage_dict.get( v, 0 ) + cov
+                else:
+                    #this is a standard nucleotide
+                    coverage_dict[ nuc ] = coverage_dict.get( nuc, 0 ) + cov
         #filter by depth
         if min_support_depth:
             coverage_dict2 = {}

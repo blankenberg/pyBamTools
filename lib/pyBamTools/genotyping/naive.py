@@ -2,7 +2,6 @@
 import string
 from sys import stderr
 from datetime import date
-from numbers import Number
 
 import numpy
 
@@ -13,6 +12,7 @@ from ..util.odict import odict
 from ..util import MAX_NEG_INT
 
 from ..util import NUMPY_DTYPES
+from ..util import is_integer
 
 from ..util.sam import SAM_HEADER_NON_TAB_RECORDS
 from ..util.sam import SAM_READ_GROUP_RECORD_CODE
@@ -337,7 +337,7 @@ class ReadGroupGenotyper( object ):
             for name, value in coverage:
                 if not delete_remaining:
                     break
-                if isinstance( name, Number ):
+                if is_integer( name ):
                     delete_remaining -= 1
                     max_delete_size = max( max_delete_size, name )
         len_old_reference_nucleotide = len( reference_nucleotide )
@@ -345,7 +345,7 @@ class ReadGroupGenotyper( object ):
             reference_nucleotide = self._get_ref_allele_for_position( sequence_name, position, length=max_delete_size+1, die_on_error = not self._allow_out_of_bounds_positions )
         rval = []
         for name, value in coverage:
-            if isinstance( name, Number ):
+            if is_integer( name ):
                 #deletion
                 name = reference_nucleotide[:len_old_reference_nucleotide] + reference_nucleotide[ len_old_reference_nucleotide + name :] 
             elif len( name ) > 1:
@@ -359,6 +359,8 @@ class ReadGroupGenotyper( object ):
     def _calculate_allele_coverage( self, coverages, coverages_reverse, reference_nucleotide, position=None, sequence_name=None, skip_list = None, min_support_depth=None ):
         if not isinstance( coverages, list ):
             coverages = [ coverages ]
+        else:
+            coverages = list( coverages )
         if coverages_reverse:
             if not isinstance( coverages_reverse, list ):
                 coverages_reverse = [ coverages_reverse ]
@@ -396,7 +398,7 @@ class ReadGroupGenotyper( object ):
             for name, value in coverage_dict.iteritems():
                 if value >= min_support_depth:
                     coverage_dict2[name] = value
-                elif isinstance( name, Number ):
+                elif is_integer( name ):
                     deletion_count -= 1
                 elif len( name ) > 1:
                     insertion_count -= 1
@@ -454,7 +456,7 @@ class ReadGroupGenotyper( object ):
                 nucs_sum = 0
                 for value, name in nucs:
                     if value >= min_support_depth:
-                        if isinstance( name, Number ):
+                        if is_integer( name ):
                             #deletion
                             name = indeled_ref[:len_old_reference_nucleotide] + indeled_ref[ len_old_reference_nucleotide + name :]
                         elif len( name ) > 1:
@@ -490,13 +492,13 @@ class ReadGroupGenotyper( object ):
                     prefix = ''
                 for c, count in coverage_dict.iteritems():
                     if count:#should we filter by self._min_support_dept here? or display all
-                        if isinstance( c, Number ):
+                        if is_integer( c ):
                             c = 'd%s' % ( c )
                         nc_field = "%s%s%s=%d," % ( nc_field, prefix, c, count )
                 prefix = '-'
                 for c, count in coverage_dict_reverse.iteritems():
                     if count:#should we filter by self._min_support_dept here? or display all
-                        if isinstance( c, Number ):
+                        if is_integer( c ):
                             c = 'd%s' % ( c )
                         nc_field = "%s%s%s=%d," % ( nc_field, prefix, c, count )
                 

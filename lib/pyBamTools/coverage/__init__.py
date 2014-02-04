@@ -155,14 +155,14 @@ class SequenceCoverage( object ):
 
 class NucleotideCoverage( object ):
     
-    def __init__( self, size=None, dtype=numpy.uint8, reference_name=None ): 
+    def __init__( self, size=None, dtype=numpy.uint8, reference_name=None, safe=True ): 
         if not size:
             print >> sys.stderr, "Warning: NucleotideCoverage requested without a valid size, using default size of '%i'." % ( DEFAULT_SEQUENCE_LENGTH )
             size = DEFAULT_SEQUENCE_LENGTH
         self._nucleotide_dict = {}
         self.size = size
         for nuc in NUCLEOTIDES_UPPER + [ UNKNOWN_NUCLEOTIDE_NAME ]:
-            self._nucleotide_dict[ nuc ] = SequenceCoverage( size, dtype=dtype )
+            self._nucleotide_dict[ nuc ] = SequenceCoverage( size, dtype=dtype, safe=safe )
         self._insert_dict = {}
         self._delete_dict = {}
         self._reference_name = reference_name

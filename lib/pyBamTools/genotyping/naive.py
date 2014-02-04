@@ -42,7 +42,8 @@ class ReadGroupGenotyper( object ):
     
     #TODO: make these filters defined generically
     def __init__( self, bam_readers=None, reference_sequence_filename=None, dtype=None, min_support_depth=None, 
-                  min_base_quality=None, min_mapping_quality=None, restrict_regions=None, use_strand=False, allow_out_of_bounds_positions=False ):
+                  min_base_quality=None, min_mapping_quality=None, restrict_regions=None, use_strand=False, 
+                  allow_out_of_bounds_positions=False, safe=True ):
         self._read_groups = odict() #order important?
         self._sample_names = []
         self._sequence_lengths = odict()
@@ -86,6 +87,7 @@ class ReadGroupGenotyper( object ):
         self._restrict_regions = NamedRegionOverlap( self._sequence_lengths, regions=self._restrict_regions_list )
         self._covered_regions = NamedRegionOverlap( self._sequence_lengths )
         self._allow_out_of_bounds_positions = allow_out_of_bounds_positions
+        self._safe = safe
         
         #issue warnings about zero length sequences
         for ref_seq_name, ref_seq_size in self._sequence_lengths.iteritems():
@@ -131,29 +133,29 @@ class ReadGroupGenotyper( object ):
                             if read.is_seq_reverse_complement():
                                 coverage = self._read_group_coverage_reverse.get( rg_name, None )
                                 if coverage is None:
-                                    coverage = self._read_group_coverage_reverse[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype )
+                                    coverage = self._read_group_coverage_reverse[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype, safe=self._safe )
                             else:
                                 coverage = self._read_group_coverage.get( rg_name, None )
                                 if coverage is None:
-                                    coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype )
+                                    coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype, safe=self._safe )
                         else:
                             coverage = self._read_group_coverage.get( rg_name, None )
                             if coverage is None:
-                                coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype )
+                                coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype, safe=self._safe )
                     else:
                         if self._use_strand:
                             if read.is_seq_reverse_complement():
                                 coverage = self._no_read_group_coverage_reverse
                                 if coverage is None:
-                                    coverage = self._no_read_group_coverage_reverse = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype )
+                                    coverage = self._no_read_group_coverage_reverse = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype, safe=self._safe )
                             else:
                                 coverage = self._no_read_group_coverage
                                 if coverage is None:
-                                    coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype )
+                                    coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype, safe=self._safe )
                         else:
                             coverage = self._no_read_group_coverage
                             if coverage is None:
-                                coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype )
+                                coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype, safe=self._safe )
                     coverage.add_read( read, min_base_quality=self._min_base_quality ) #coverage will be determined and stored for non-overlapping bits here
                     self._covered_regions.add_region( ( seq_name, start, end ) ) #store overlap for faster iteration over coverage
             else:

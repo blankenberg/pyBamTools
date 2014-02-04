@@ -9,13 +9,19 @@ from ..util.nuc import INSERTIONS_KWD
 from ..util.nuc import NUCLEOTIDES_UPPER
 from ..util.nuc import UNKNOWN_NUCLEOTIDE_NAME
 
+from ..util.odict import odict
+
+from ..util import MAX_INT, MAX_NEG_INT
+
 DEFAULT_SEQUENCE_LENGTH = 255000000
+
+CIGAR_MATCH_LIST = [ 0, 7, 8 ]
 
 class NamedRegionOverlap( object ):
     
     def __init__( self, sequence_lengths, regions=None ):
         self._sequence_lengths = sequence_lengths
-        self._regions = {}
+        self._regions = odict()
         self._complete_regions = []
         if regions:
             for region in regions:
@@ -29,16 +35,21 @@ class NamedRegionOverlap( object ):
                 del self._regions[ region ]
         else:
             region_name, region_start, region_end = region
-            if region_start >= self._sequence_lengths[ region_name ]:
-                return #start is before end of sequence, can't add anything
-            region_start = max( region_start, 0 ) #no neg region starts
-            region_end = min( region_end, self._sequence_lengths[ region_name ] ) #region maxes out at length of sequence
             if region_name not in self._complete_regions:
+                sequence_length = self._sequence_lengths[ region_name ]
+                if region_start >= sequence_length:
+                    return #start is before end of sequence, can't add anything
+                region_start = max( region_start, 0 ) #no neg region starts, do we need to actually check this? safer if we do....
+                region_end = min( region_end, sequence_length ) #region maxes out at length of sequence
+                if region_start == 0 and region_end == sequence_length:
+                    return self.add_region( region_name ) #if is complete region, add it as complete region
                 if region_name not in self._regions:
-                    self._regions[ region_name ] = self._coverage_array = numpy.zeros( ( self._sequence_lengths[ region_name ] ), dtype=numpy.bool )
-                self._regions[ region_name ][ region_start:region_end ] = numpy.ones( region_end - region_start, dtype=numpy.bool )
+                    self._regions[ region_name ] = numpy.zeros( ( sequence_length ), dtype=numpy.bool ) #self._coverage_array = 
+                self._regions[ region_name ][ region_start:region_end ] = True #numpy.ones( region_end - region_start, dtype=numpy.bool )
+    
     def is_empty( self ):
         return not self._complete_regions and not self._regions
+    
     def region_overlaps( self, region_name, region_start=None, region_end=None, empty_default=False ):
         if self.is_empty():
             return empty_default
@@ -56,6 +67,7 @@ class NamedRegionOverlap( object ):
                 region_end = region_start + 1
             return True in self._regions[ region_name ][ region_start:region_end ]
         return False
+    
     def iter_covered_regions( self, region_names=None ):
         if not region_names:
             region_names = self._sequence_lengths.keys()
@@ -65,46 +77,76 @@ class NamedRegionOverlap( object ):
             if region_name in self._complete_regions:
                 yield region_name, 0, self._sequence_lengths[ region_name ]
             elif region_name in self._regions:
+                region = self._regions[ region_name ]
                 try:
-                    start_pos = numpy.where( self._regions[ region_name ] == True )[0][0]
+                    start_pos = numpy.where( region == True )[0][0]
                 except IndexError:
                     continue
                 sequence_size = self._sequence_lengths[ region_name ]
                 #max_index = sequence_size - 1
                 while True:
                     try:
-                        end_pos = numpy.where( self._regions[ region_name ][ start_pos: ] == False )[0][0] + start_pos
+                        end_pos = numpy.where( region[ start_pos: ] == False )[0][0] + start_pos
                     except IndexError:
                         yield region_name, start_pos, sequence_size
                         break
                     yield region_name, start_pos, end_pos
                     try:
-                        start_pos = numpy.where( self._regions[ region_name ][ end_pos: ] == True )[0][0] + end_pos
+                        start_pos = numpy.where( region[ end_pos: ] == True )[0][0] + end_pos
                     except IndexError:
                         break
 
 class SequenceCoverage( object ):
-    def __init__( self, size=DEFAULT_SEQUENCE_LENGTH, dtype=numpy.uint8 ):
+    
+    def __init__( self, size=None, dtype=numpy.uint8, safe=True ):
+        if not size:
+            print >> sys.stderr, "Warning: SequenceCoverage requested without a valid size, using default size of '%i'." % ( DEFAULT_SEQUENCE_LENGTH )
+            size = DEFAULT_SEQUENCE_LENGTH
+        self._dtype = dtype
+        self._max_value = dtype( MAX_INT )
         self._coverage_array = numpy.zeros( ( size ), dtype=dtype )
         self._size = size
+        self._one = dtype( 1 )
+        if safe:
+            self.increment = self._increment_check
+        else:
+            self.increment = self._increment
+    
     def __str__( self ):
         return str( self._coverage_array )
+    
     def __iter__( self ):
         return iter( self._coverage_array )
+    
     def get( self, position, default=None ):
-        if 0 < position >= self._size:
+        if position >= self._size or position < 0:
             print >>sys.stderr, 'Warning: coverage of out of bounds (size=%s) position has been requested: %s' % ( self._size, position )
             return default #fixme: 0 or None for default here?
         return self._coverage_array[ position ]
+    
     def set( self, position, value ):
-        if 0 < position >= self._size:
+        if position >= self._size or position < 0:
             print >>sys.stderr, 'Warning: setting coverage of out of bounds (size=%s) position has been requested: %s to be set to %s. This information has been ignored.' % ( self._size, position, value )
             return None
         try:
+            if value > self._max_value:
+                print >> sys.stderr, "Value of %i at position %i is too large to fit into array, setting to max value (%i)." % ( value, position, self._max_value )
+                value = self._max_value
             self._coverage_array[ position ] = value
         except OverflowError:
             print >> sys.stderr, "Value of %i at position %i is too large to fit into array, keeping current value (%i)." % ( value, position, self._coverage_array[ position ] )
         return self._coverage_array[ position ]
+    
+    def _increment( self, position ):
+        self._coverage_array[ position ] += self._one
+    
+    def _increment_check( self, position ):
+        if self._coverage_array[ position ] == self._max_value:
+            print >> sys.stderr, "Value of %i at position %i is too large to fit into array, setting to max value (%i)." % ( self._max_value, position, self._max_value )
+        if position >= self._size or position < 0:
+            print >>sys.stderr, 'Warning: coverage of out of bounds (size=%s) position has been requested: %s' % ( self._size, position )
+        self._coverage_array[ position ] += self._one
+    
     def sum( self, beg=None, end=None ):
         if beg == end == None:
             return self._coverage_array.sum()
@@ -113,7 +155,10 @@ class SequenceCoverage( object ):
 
 class NucleotideCoverage( object ):
     
-    def __init__( self, size=DEFAULT_SEQUENCE_LENGTH, dtype=numpy.uint8, reference_name=None ): 
+    def __init__( self, size=None, dtype=numpy.uint8, reference_name=None ): 
+        if not size:
+            print >> sys.stderr, "Warning: NucleotideCoverage requested without a valid size, using default size of '%i'." % ( DEFAULT_SEQUENCE_LENGTH )
+            size = DEFAULT_SEQUENCE_LENGTH
         self._nucleotide_dict = {}
         self.size = size
         for nuc in NUCLEOTIDES_UPPER + [ UNKNOWN_NUCLEOTIDE_NAME ]:
@@ -121,28 +166,38 @@ class NucleotideCoverage( object ):
         self._insert_dict = {}
         self._delete_dict = {}
         self._reference_name = reference_name
+    
     def add_read( self, read, min_base_quality=None, die_on_error=False ):
-        position = read.get_position( one_based=False )
-        sequence = list( read.get_seq() )
-        quality = list(read.get_qual_tuple())
-        cigar = read.get_cigar()
+        position = read.get_position_zero_based()
+        sequence = read.get_seq().upper()
+        #only need to parse real quality if min_base_quality is not None
+        if min_base_quality is None:
+            quality = None
+        else:
+            quality = read.get_qual_list()
         position_offset = 0
-        while cigar:
-            cigar_size, cigar_op = cigar.pop( 0 )
-            if cigar_op in [ 0, 7, 8 ]: 
+        for cigar_size, cigar_op in read.get_cigar():
+            if cigar_op in CIGAR_MATCH_LIST: 
                 #M alignment match (can be a sequence match or mismatch); = sequence match; x sequence mismatch
                 #= sequence match
                 #X sequence mismatch
+                i = None
                 for i in range( cigar_size ):
-                    nuc = sequence.pop( 0 ).upper()
+                    nuc = sequence[ i ]
                     cov = self._nucleotide_dict.get( nuc, None )
                     if not cov:
                         cov = self._nucleotide_dict[ UNKNOWN_NUCLEOTIDE_NAME ]
                     j = position + position_offset + i
-                    base_quality = quality.pop(0)
+                    if j >= self.size:
+                        return #short circuit for size here...
+                    if quality:
+                        base_quality = quality[ i ]
                     if min_base_quality is None or base_quality >= min_base_quality:
-                        if cov.set( j, cov.get( j, 0 ) + 1 ) is None:
-                            print >> sys.stderr, "Error causing read:", read.to_sam()
+                        cov.increment( j )
+                if i is not None:
+                    sequence = sequence[ i: ]
+                    if quality:
+                        quality = quality[ i: ]
                 position_offset += cigar_size
             elif cigar_op == 1: #I insertion to the reference
                 #remove inserted seqs and qualities
@@ -155,13 +210,15 @@ class NucleotideCoverage( object ):
                     else:
                         sys.stderr.write( "Insertion representation requires a position less than one:\n%s\n" % ( read.to_sam() ) )
                         return
-                base_quality = quality[:cigar_size]
+                if quality:
+                    base_quality = quality[:cigar_size]
+                    quality = quality[cigar_size:]
                 if min_base_quality is None or numpy.mean( base_quality ) >= min_base_quality:
                     if i not in self._insert_dict:
                         self._insert_dict[i] = []
-                    self._insert_dict[i].append( ''.join( sequence[:cigar_size] ) )
+                    self._insert_dict[i].append( sequence[:cigar_size] )
                 sequence = sequence[cigar_size:]
-                quality = quality[cigar_size:]
+                
             elif cigar_op == 2: #D deletion from the reference
                 #update position
                 i = position + position_offset
@@ -184,7 +241,8 @@ class NucleotideCoverage( object ):
                 #Remove soft clipped sequence
                 #Do not move position
                 sequence = sequence[cigar_size:]
-                quality = quality[cigar_size:]
+                if quality:
+                    quality = quality[cigar_size:]
             elif cigar_op == 5: #H hard clipping (clipped sequences NOT present in SEQ)
                 #Do not move position
                 pass
@@ -197,12 +255,9 @@ class NucleotideCoverage( object ):
                     sys.stderr.write( 'The cigar operation "%s" of size "%s" for the read below is unknown.\n%s)\n' % ( cigar_op, cigar_size, read ) )
                     return
     
-    def __str__( self ):
-        return str( self._coverage_array )
-    def __iter__( self ):
-        return iter( self._coverage_array )
     def iteritems( self ):
         return self._nucleotide_dict.iteritems()
+    
     def get( self, position, nucleotides=True, insertions=True, deletions=True ):
         nucs = {}
         if nucleotides:
@@ -217,11 +272,7 @@ class NucleotideCoverage( object ):
             if position in self._insert_dict:
                 nucs[ INSERTIONS_KWD ] = self._insert_dict[position]
         return nucs
-    def set( self, position, value ):
-        try:
-            self._coverage_array[ position ] = value
-        except OverflowError:
-            print >> sys.stderr, "Value of %i at position %i is too large to fit into array, keeping current value (%i)." % ( value, position, self._coverage_array[ position ] )
+    
     def iter_coverage( self ):
         for i in xrange( self.size ):
             nucs = self.get( i )

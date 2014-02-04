@@ -10,13 +10,15 @@ from pyBamParser.fasta import IndexedReferenceSequences
 from ..util.odict import odict
 
 from ..util import MAX_NEG_INT
-
 from ..util import NUMPY_DTYPES
 from ..util import is_integer
+from ..util import get_region_overlap_with_positions
 
 from ..util.sam import SAM_HEADER_NON_TAB_RECORDS
 from ..util.sam import SAM_READ_GROUP_RECORD_CODE
 from ..util.sam import SAM_NO_READ_GROUP_NAME
+from ..util.sam import SAM_READ_GROUP_ID_STR
+from ..util.sam import SAM_READ_GROUP_SAMPLE_STR
 
 from ..util.vcf import VCF_NO_VALUE
 from ..util.vcf import VCF_UNPHASED_SEPARATOR
@@ -30,6 +32,9 @@ from ..util.nuc import INSERTIONS_KWD
 
 from ..coverage import NucleotideCoverage
 from ..coverage import NamedRegionOverlap
+
+TAB_CHAR = "\t"
+COMMA_CHAR = ","
 
 class ReadGroupGenotyper( object ):
     __INDEL_OFFSET__ = 0
@@ -46,9 +51,11 @@ class ReadGroupGenotyper( object ):
         self._no_read_group_coverage = None#odcit()
         self._no_read_group_coverage_reverse = None
         self._has_no_read_groups = False
-        self._reference_name = None
         self._reference_sequence_filename = reference_sequence_filename
         self._reference_sequences = IndexedReferenceSequences( reference_sequence_filename, sequence_filter=string.upper )
+        #add seq lengths from fasta index
+        for ref_seq_name in self._reference_sequences.get_sequence_names():
+            self._sequence_lengths[ ref_seq_name ] = self._reference_sequences.get_sequence_size_by_name( ref_seq_name )
         if dtype and isinstance( dtype, basestring ):
             dtype = NUMPY_DTYPES.get( dtype, self.__DEFAULT_NUMPY_DTYPE__ )
         if not dtype:
@@ -60,7 +67,7 @@ class ReadGroupGenotyper( object ):
             bam_readers = [ bam_readers ]
         self._readers = []
         for bam_reader in bam_readers:
-            self.add_reader( bam_reader ) #(reader, buffered block)
+            self.add_reader( bam_reader )
         self._use_strand = use_strand
         #filters:
         self._min_support_depth = min_support_depth or 0
@@ -68,158 +75,146 @@ class ReadGroupGenotyper( object ):
         self._min_mapping_quality = min_mapping_quality
         if self._min_mapping_quality is None:
             self._min_mapping_quality = MAX_NEG_INT
+        if not restrict_regions:
+            restrict_regions = [ ( ref_seq_name, 0, ref_seq_length ) for ref_seq_name, ref_seq_length in self._sequence_lengths.iteritems() ]
+        else:
+            for i in xrange( len( restrict_regions ) ):
+                if isinstance( restrict_regions[i], basestring ):
+                    restrict_regions[i] = ( restrict_regions[i], 0, self._sequence_lengths[ restrict_regions[i] ] )
+            restrict_regions = self._reference_sequences.sort_region_list( restrict_regions )
         self._restrict_regions_list = restrict_regions
         self._restrict_regions = NamedRegionOverlap( self._sequence_lengths, regions=self._restrict_regions_list )
         self._covered_regions = NamedRegionOverlap( self._sequence_lengths )
         self._allow_out_of_bounds_positions = allow_out_of_bounds_positions
         
+        #issue warnings about zero length sequences
+        for ref_seq_name, ref_seq_size in self._sequence_lengths.iteritems():
+            if ref_seq_size < 1:
+                print >>sys.stderr, "Warning: %s was initialized with suspect sequence length (%i)." % ( ref_seq_name, ref_seq_size )
+        
     def add_reader( self, bam_reader ):
-        self._readers.append( ( bam_reader, None ) ) #(reader, buffered read)
+        self._readers.append( bam_reader )
         for seq_name, seq_len in bam_reader.get_references():
             if seq_name not in self._sequence_lengths:
                 self._sequence_lengths[ seq_name ] = seq_len
-                #print 'found', seq_name, seq_len
             else:
                 assert self._sequence_lengths[ seq_name ] == seq_len, "Sequence length mismatch for '%s': %s != %s" % ( seq_name, self._sequence_lengths[ seq_name ], seq_len ) #TODO: print out offending reader name
         #add read group information
         headers = bam_reader.get_sam_header_dict()
         if SAM_READ_GROUP_RECORD_CODE in headers:
-            #print 'rg', headers[SAM_READ_GROUP_RECORD_CODE]
             for rg in headers[SAM_READ_GROUP_RECORD_CODE]: #{'LB': 'reads_library', 'ID': 'read_group_id', 'PL': 'ILLUMINA', 'SM': 'read_sample'}
-                rg_name = rg['ID']
+                rg_name = rg[SAM_READ_GROUP_ID_STR]
                 if rg_name not in self._read_groups:
                     self._read_groups[ rg_name ] = rg #TODO make get_readgroups method
                     #TODO: make sample name default to read group id
-                    if rg['SM'] not in self._sample_names:
-                        self._sample_names.append( rg['SM'] )
+                    if rg[SAM_READ_GROUP_SAMPLE_STR] not in self._sample_names:
+                        self._sample_names.append( rg[SAM_READ_GROUP_SAMPLE_STR] )
                 else:
                     assert self._read_groups[ rg_name ] == rg, "Read Group info mismatch: '%s' != '%s'." % ( self._read_groups[ rg_name ], rg )
         else:
             self._has_no_read_groups = True #for now all non-read groups are in one category, merges multiple inputs
-    def _process_read( self, read ):
-        position = read.get_position( one_based=False )
-        end_position = read.get_end_position( one_based=False )
-        if self._restrict_regions.region_overlaps( self._reference_name, position, end_position, empty_default=True ):
+    
+    def _process_read( self, read, seq_name, region_start, region_end ):
+        region_overlap = 0
+        if read.get_reference_name() == seq_name:
+            position = read.get_position( one_based=False )
+            end_position = read.get_end_position( one_based=False )
             if read.get_mapq >= self._min_mapping_quality:
-                rg_name = read.get_read_group()
-                if rg_name:
-                    if self._use_strand:
-                        if read.is_seq_reverse_complement():
-                            coverage = self._read_group_coverage_reverse.get( rg_name, None )
-                            if coverage is None:
-                                coverage = self._read_group_coverage_reverse[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype )
+                region_overlap, start, end = get_region_overlap_with_positions( ( position, end_position ), ( region_start, region_end ) ) #can speed this up by not using get_region_overlap method above, instead doing it in-line
+                if region_overlap:
+                    if self._read_groups:
+                        rg_name = read.get_read_group()
+                    else:
+                        rg_name = None #if no readgroups in header, assume no read groups in read
+                    if rg_name:
+                        if self._use_strand:
+                            if read.is_seq_reverse_complement():
+                                coverage = self._read_group_coverage_reverse.get( rg_name, None )
+                                if coverage is None:
+                                    coverage = self._read_group_coverage_reverse[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype )
+                            else:
+                                coverage = self._read_group_coverage.get( rg_name, None )
+                                if coverage is None:
+                                    coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype )
                         else:
                             coverage = self._read_group_coverage.get( rg_name, None )
                             if coverage is None:
-                                coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype )
+                                coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype )
                     else:
-                        coverage = self._read_group_coverage.get( rg_name, None )
-                        if coverage is None:
-                            coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype )
-                else:
-                    if self._use_strand:
-                        if read.is_seq_reverse_complement():
-                            coverage = self._no_read_group_coverage_reverse
-                            if coverage is None:
-                                coverage = self._no_read_group_coverage_reverse = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype )
+                        if self._use_strand:
+                            if read.is_seq_reverse_complement():
+                                coverage = self._no_read_group_coverage_reverse
+                                if coverage is None:
+                                    coverage = self._no_read_group_coverage_reverse = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype )
+                            else:
+                                coverage = self._no_read_group_coverage
+                                if coverage is None:
+                                    coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype )
                         else:
                             coverage = self._no_read_group_coverage
                             if coverage is None:
-                                coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype )
-                    else:
-                        coverage = self._no_read_group_coverage
-                        if coverage is None:
-                            coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ self._reference_name ], dtype=self._dtype )
-                coverage.add_read( read, min_base_quality=self._min_base_quality )
-                
-                self._covered_regions.add_region( ( self._reference_name, position, end_position ) ) #store overlap for faster iteration over coverage
+                                coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype )
+                    coverage.add_read( read, min_base_quality=self._min_base_quality ) #coverage will be determined and stored for non-overlapping bits here
+                    self._covered_regions.add_region( ( seq_name, start, end ) ) #store overlap for faster iteration over coverage
+            else:
+                region_overlap = -1 #-1 indicates that overlap was not checked
+        return region_overlap
     
-    def _buffer_readers( self, condition=False ):
-        readers = []
-        for bam_reader, buffered_read in self._readers:
-            empty_reader = False
-            while not buffered_read or ( condition and not condition( buffered_read ) ):
-                try:
-                    buffered_read = bam_reader.next()
-                except StopIteration:
-                    empty_reader = True
-                    break
-            if empty_reader:
-                continue
-            readers.append( ( bam_reader, buffered_read ) )
-        self._readers = readers
-        return readers
     def _iter_current_coverage( self ):
-        if self._reference_name and self._restrict_regions.region_overlaps( self._reference_name, empty_default=True ):
-            for region_name, region_start, region_end in self._covered_regions.iter_covered_regions():
-                print 'coverage', region_name, region_start, region_end
-                for i in xrange( region_start, region_end ):
-                    coverage = odict()
-                    coverage_reverse = odict()
-                    if self._read_group_coverage:
-                        for rg_name in self._read_groups.keys():
-                            cov = self._read_group_coverage.get( rg_name, None )
-                            if cov:
-                                cov_val = cov.get( i, insertions=False, deletions=False )
-                                cov_val.update( cov.get( i + self.__INDEL_OFFSET__, nucleotides=False ) )
-                                if cov_val:
-                                    coverage[ rg_name ] = cov_val
-                            cov_reverse = self._read_group_coverage_reverse.get( rg_name, None )
-                            if cov_reverse:
-                                cov_reverse_val = cov_reverse.get( i, insertions=False, deletions=False )
-                                cov_reverse_val.update( cov_reverse.get( i + self.__INDEL_OFFSET__, nucleotides=False ) )
-                                if cov_reverse_val:
-                                    coverage_reverse[ rg_name ] = cov_reverse_val
-                    if self._no_read_group_coverage:
-                        cov = self._no_read_group_coverage.get( i, insertions=False, deletions=False )
-                        cov.update( self._no_read_group_coverage.get( i + self.__INDEL_OFFSET__, nucleotides=False ) )
+        for region_name, region_start, region_end in self._covered_regions.iter_covered_regions():
+            for i in xrange( region_start, region_end ):
+                coverage = odict()
+                coverage_reverse = odict()
+                if self._read_group_coverage:
+                    for rg_name in self._read_groups.keys():
+                        cov = self._read_group_coverage.get( rg_name, None )
                         if cov:
-                            coverage[ SAM_NO_READ_GROUP_NAME ] = cov
-                    if self._no_read_group_coverage_reverse:
-                        cov = self._no_read_group_coverage_reverse.get( i, insertions=False, deletions=False )
-                        cov.update( self._no_read_group_coverage_reverse.get( i + self.__INDEL_OFFSET__, nucleotides=False ) )
-                        if cov:
-                            coverage_reverse[ SAM_NO_READ_GROUP_NAME ] = cov
-                    if coverage or coverage_reverse:
-                        yield self._reference_name, i, ( coverage, coverage_reverse )
+                            cov_val = cov.get( i, insertions=False, deletions=False )
+                            cov_val.update( cov.get( i + self.__INDEL_OFFSET__, nucleotides=False ) )
+                            if cov_val:
+                                coverage[ rg_name ] = cov_val
+                        cov_reverse = self._read_group_coverage_reverse.get( rg_name, None )
+                        if cov_reverse:
+                            cov_reverse_val = cov_reverse.get( i, insertions=False, deletions=False )
+                            cov_reverse_val.update( cov_reverse.get( i + self.__INDEL_OFFSET__, nucleotides=False ) )
+                            if cov_reverse_val:
+                                coverage_reverse[ rg_name ] = cov_reverse_val
+                if self._no_read_group_coverage:
+                    cov = self._no_read_group_coverage.get( i, insertions=False, deletions=False )
+                    cov.update( self._no_read_group_coverage.get( i + self.__INDEL_OFFSET__, nucleotides=False ) )
+                    if cov:
+                        coverage[ SAM_NO_READ_GROUP_NAME ] = cov
+                if self._no_read_group_coverage_reverse:
+                    cov = self._no_read_group_coverage_reverse.get( i, insertions=False, deletions=False )
+                    cov.update( self._no_read_group_coverage_reverse.get( i + self.__INDEL_OFFSET__, nucleotides=False ) )
+                    if cov:
+                        coverage_reverse[ SAM_NO_READ_GROUP_NAME ] = cov
+                if coverage or coverage_reverse:
+                    yield region_name, i, ( coverage, coverage_reverse )
+    
     def iter_coverage( self ):
-        sequence_names = self._sequence_lengths.keys()
-        read_no_ref_filter = lambda x: True if x.get_reference_id() >= 0 else False
-        while self._readers:
-            buffered_readers = self._buffer_readers( condition=read_no_ref_filter )
-            if not buffered_readers:
-                break
-            reference_name_index = len( sequence_names )
-            for bam_reader, read in buffered_readers:
-                reference_name_index = min( reference_name_index, sequence_names.index( read.get_reference_name() ) )
-            next_reference_name = sequence_names[ reference_name_index ]
-            if next_reference_name != self._reference_name:
-                for v in self._iter_current_coverage():
-                    yield v
-                #reset values
-                self._read_group_coverage = {}#odict()
-                self._no_read_group_coverage = None
-                self._read_group_coverage_reverse = {}#odict()
-                self._no_read_group_coverage_reverse = None
-                #CONFIRM NOT NEED TO RESET THIS: self._restrict_regions = NamedRegionOverlap( self._sequence_lengths, regions=self._restrict_regions_list ) # reset to initial values
-                self._covered_regions = NamedRegionOverlap( self._sequence_lengths )
-            self._reference_name = next_reference_name
-            used_reads = []
-            for i, ( bam_reader, read ) in enumerate( buffered_readers ):
-                if read.get_reference_name() == self._reference_name:
-                    used_reads.append( i )
-                    self._process_read( read )
-            for i in used_reads:
-                self._readers[i] = ( self._readers[i][0], None )
-        #flush remaining coverage
-        for v in self._iter_current_coverage():
-            yield v
-        #reset values
-        self._read_group_coverage = {}#odict()
-        self._no_read_group_coverage = None
-        self._read_group_coverage_reverse = {}#odict()
-        self._no_read_group_coverage_reverse = None
-    def iter_vcf( self, ploidy=2, variants_only=False, command_line=None, info_fields=['AC','AF'], format_fields=['GT', 'AC', 'AF', 'NC']  ):
+        for seq_name, start, end in self._restrict_regions.iter_covered_regions():
+            for reader in self._readers:
+                bam_read = reader.jump( seq_name, start, next=True )
+                if bam_read:
+                    overlap = self._process_read( bam_read, seq_name, start, end )
+                    while overlap:
+                        try:
+                            bam_read = reader.next()
+                        except StopIteration:
+                            break
+                        overlap = self._process_read( bam_read, seq_name, start, end )
+            
+            for v in self._iter_current_coverage():
+                yield v
+            #reset values
+            self._read_group_coverage = {}#odict()
+            self._no_read_group_coverage = None
+            self._read_group_coverage_reverse = {}#odict()
+            self._no_read_group_coverage_reverse = None
+            #CONFIRM NOT NEED TO RESET THIS: self._restrict_regions = NamedRegionOverlap( self._sequence_lengths, regions=self._restrict_regions_list ) # reset to initial values
+            self._covered_regions = NamedRegionOverlap( self._sequence_lengths )
+    def iter_vcf( self, ploidy=2, variants_only=False, command_line=None, info_fields=['AC', 'AF'], format_fields=['GT', 'AC', 'AF', 'NC']  ):
         #http://www.1000genomes.org/wiki/Analysis/Variant%20Call%20Format/vcf-variant-call-format-version-41
         # move these consts
         #output header
@@ -248,19 +243,28 @@ class ReadGroupGenotyper( object ):
         for sample in samples:
             header = "%s\t%s" % ( header, sample )
         yield header
+        alt_lambda = lambda x: x[0]
+        vcf_id = VCF_NO_VALUE #move id back into loop when it can be provided via e.g. external file
+        #move qual and filter back into loop when they are calculated / provided
+        qual = VCF_NO_VALUE 
+        filter = VCF_NO_VALUE 
+        _calculate_allele_coverage = self._calculate_allele_coverage
+        _get_ref_allele_for_position = self._get_ref_allele_for_position
+        _coverage_by_sample_from_dict = self._coverage_by_sample_from_dict
+        _get_info_format_value_fields = self._get_info_format_value_fields
         for seq_name, pos, ( nucs, nucs_reverse ) in self.iter_coverage():
-            id = VCF_NO_VALUE
-            ref = self._get_ref_allele_for_position( seq_name, pos, die_on_error = not self._allow_out_of_bounds_positions )
-            indeled_ref, alt_tuples = self._calculate_allele_coverage( nucs.values(), nucs_reverse.values() , ref, position=pos, sequence_name=seq_name, skip_list=ref, min_support_depth=self._min_support_depth )
+            #vcf_id = VCF_NO_VALUE #add id back here, when list of ids can be provided via e.g. external file
+            ref = _get_ref_allele_for_position( seq_name, pos, die_on_error = not self._allow_out_of_bounds_positions )
+            indeled_ref, alt_tuples = _calculate_allele_coverage( nucs.values(), nucs_reverse.values(), ref, position=pos, sequence_name=seq_name, skip_list=ref, min_support_depth=self._min_support_depth )
             #for now, lets to a special check for anything not having a string for a name:
             # FIXME: clean this up after confirming fix
-            alt = []
-            for alt_name, alt_count in alt_tuples:
-                if isinstance( alt_name, basestring ):
-                    alt.append( alt_name )
-                else:
-                    print >>stderr, 'An alternate allele of invalid name "%s" was encountered having count "%s" at position "%s" and has been removed.' % ( alt_name, alt_count, pos )
-            #alt = map( lambda x: x[0], alt_tuples )
+            #alt = []
+            #for alt_name, alt_count in alt_tuples:
+            #    if isinstance( alt_name, basestring ):
+            #        alt.append( alt_name )
+            #    else:
+            #        print >>stderr, 'An alternate allele of invalid name "%s" was encountered having count "%s" at position "%s" and has been removed.' % ( alt_name, alt_count, pos )
+            alt = map( alt_lambda, alt_tuples )
             
             if variants_only:
                 no_alt = True
@@ -270,17 +274,17 @@ class ReadGroupGenotyper( object ):
                         break
                 if no_alt:
                     continue #no alts here, don't return region. TODO: Make this configurable
-            qual = VCF_NO_VALUE 
-            filter = VCF_NO_VALUE 
-            fields = [ seq_name, str( pos + 1 ), id, indeled_ref, ','.join( alt ) or VCF_NO_VALUE, qual, filter ]
+            #qual = VCF_NO_VALUE 
+            #filter = VCF_NO_VALUE 
+            fields = [ seq_name, str( pos + 1 ), vcf_id, indeled_ref, COMMA_CHAR.join( alt ) or VCF_NO_VALUE, qual, filter ]
             
-            samples_dict = self._coverage_by_sample_from_dict( samples, nucs, ref )
+            samples_dict = _coverage_by_sample_from_dict( samples, nucs, ref )
             if nucs_reverse:
-                sample_dict_reverse = self._coverage_by_sample_from_dict( samples, nucs_reverse, ref )
+                sample_dict_reverse = _coverage_by_sample_from_dict( samples, nucs_reverse, ref )
             else:
-                sample_dict_reverse = odict()
+                sample_dict_reverse = {}#odict()#real value is odict, but dict is fine when not 'real'
             
-            info, format = self._get_info_format_value_fields( samples, samples_dict, sample_dict_reverse, ref, alt, indeled_ref, info_fields=info_fields, format_fields=format_fields, ploidy=ploidy, min_support_depth=self._min_support_depth )
+            info, format = _get_info_format_value_fields( samples, samples_dict, sample_dict_reverse, ref, alt, indeled_ref, info_fields=info_fields, format_fields=format_fields, ploidy=ploidy, min_support_depth=self._min_support_depth )
             
             
             fields.append( VCF_INFO_FIELD_SEPARATOR.join( info ) or VCF_NO_VALUE )
@@ -297,15 +301,15 @@ class ReadGroupGenotyper( object ):
                 for sample in samples:
                     fields.append( VCF_NO_VALUE )
             
-            yield "\t".join( fields )
+            yield TAB_CHAR.join( fields )
     def _coverage_by_sample_from_dict( self, samples, rg_dict, reference_nucleotide ):
         rval = odict()
         for sample in samples:
             sample_dict = {}
             for rg_name, rg in rg_dict.iteritems():
-                if rg_name in self._read_groups and self._read_groups[rg_name]['SM'] == sample:
+                if rg_name in self._read_groups and self._read_groups[rg_name][SAM_READ_GROUP_SAMPLE_STR] == sample:
                     coverage = rg_dict[ rg_name ]
-                elif rg_name not in self._read_groups and rg_name == sample: #rg_name == sample == SAM_NO_READ_GROUP_NAME:
+                elif rg_name not in self._read_groups and rg_name == sample:
                     coverage = rg_dict[ SAM_NO_READ_GROUP_NAME ]
                 else:
                     continue
@@ -316,11 +320,6 @@ class ReadGroupGenotyper( object ):
                             #what todo for deletions
                             if name == INSERTIONS_KWD:
                                 v = reference_nucleotide + v
-#                                has_insertion += True
-                            #elif name == DELETIONS_KWD:
-                                #has_deletion += True
-                            #if nuc == __DELETIONS_KWD__:
-                            #    v = 'd:%v' % v
                             variants[v] = variants.get( v, 0 ) + 1
                         for v, cov in variants.iteritems():
                             sample_dict[v] = sample_dict.get( v, 0 ) + cov
@@ -417,9 +416,9 @@ class ReadGroupGenotyper( object ):
         
     def _get_ref_allele_for_position( self, sequence_name, position, length=1, die_on_error=True ):
         return self._reference_sequences.get_sequence_by_position( sequence_name, position, length=length, unknown_sequence_character=VCF_NO_VALUE, die_on_error=die_on_error )
-    def _get_info_format_value_fields( self, samples, samples_dict, samples_dict_reverse, ref, alt, indeled_ref, info_fields=['AC','AF'], format_fields=['GT', 'AC', 'AF', 'NC'], ploidy=2, min_support_depth=None ):
+    def _get_info_format_value_fields( self, samples, samples_dict, samples_dict_reverse, ref, alt, indeled_ref, info_fields=['AC', 'AF'], format_fields=['GT', 'AC', 'AF', 'NC'], ploidy=2, min_support_depth=None ):
         gt_no_value = VCF_GT_PHASED_SEPARATOR[False].join( [ VCF_NO_VALUE for i in range( ploidy ) ] )
-        ac_af_no_value = ",".join( [ VCF_NO_VALUE for i in range( len( alt ) ) ] )
+        ac_af_no_value = COMMA_CHAR.join( [ VCF_NO_VALUE for i in range( len( alt ) ) ] )
         ref_list = [indeled_ref]
         if not isinstance( alt, list ):
             alt_list = [alt]
@@ -533,12 +532,11 @@ class ReadGroupGenotyper( object ):
                         call = VCF_NO_VALUE #value is not one of the ref or alt alleles
                     gt_list.append( call )
                 
-                #print 'rval', rval
                 sample_format.append( VCF_GT_PHASED_SEPARATOR[False].join( map( str, gt_list ) ) )
                 if 'AC' in format_fields:
-                    sample_format.append( ",".join( map( str, ac_list ) ) )
+                    sample_format.append( COMMA_CHAR.join( map( str, ac_list ) ) )
                 if 'AF' in format_fields:
-                    sample_format.append( ",".join( map( str, af_list ) ) )
+                    sample_format.append( COMMA_CHAR.join( map( str, af_list ) ) )
                 #NC
                 if 'NC' in format_fields:
                     sample_format.append( nc_field )
@@ -551,12 +549,12 @@ class ReadGroupGenotyper( object ):
                 sample_format.append( VCF_NO_VALUE )
             format.append( sample_format )
         info = []
-        ac = ','.join( map( str, all_alt_nucs_count ) )
+        ac = COMMA_CHAR.join( map( str, all_alt_nucs_count ) )
         if 'AC' in info_fields:
             info.append( "AC=%s" % ( ac ) )
         if 'AF' in info_fields:
             if all_nucs_count:
-                af = ','.join( map( lambda x: str( float( x ) / float( all_nucs_count ) ), all_alt_nucs_count ) )
+                af = COMMA_CHAR.join( map( lambda x: str( float( x ) / float( all_nucs_count ) ), all_alt_nucs_count ) )
             else:
                 af = ac
             info.append( "AF=%s" % ( af ) )

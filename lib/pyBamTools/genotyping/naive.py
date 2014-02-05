@@ -92,7 +92,7 @@ class ReadGroupGenotyper( object ):
         #issue warnings about zero length sequences
         for ref_seq_name, ref_seq_size in self._sequence_lengths.iteritems():
             if ref_seq_size < 1:
-                print >>sys.stderr, "Warning: %s was initialized with suspect sequence length (%i)." % ( ref_seq_name, ref_seq_size )
+                print >>stderr, "Warning: %s was initialized with suspect sequence length (%i)." % ( ref_seq_name, ref_seq_size )
         
     def add_reader( self, bam_reader ):
         self._readers.append( bam_reader )
@@ -389,7 +389,7 @@ class ReadGroupGenotyper( object ):
                             if v not in variants:
                                 deletion_count += 1
                         else:
-                            print >>sys.stderr, "An unreachable condition has been reached in _calculate_allele_coverage at position '%s'. coverages=%s. coverages_reverse=%s" % ( position, coverages, coverages_reverse )
+                            print >>stderr, "An unreachable condition has been reached in _calculate_allele_coverage at position '%s'. coverages=%s. coverages_reverse=%s" % ( position, coverages, coverages_reverse )
                         variants[v] = variants.get( v, 0 ) + 1
                     for v, cov in variants.iteritems():
                         coverage_dict[v] = coverage_dict.get( v, 0 ) + cov

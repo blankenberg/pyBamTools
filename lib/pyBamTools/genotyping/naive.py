@@ -121,7 +121,9 @@ class ReadGroupGenotyper( object ):
         if read.get_reference_name() == seq_name:
             position = read.get_position( one_based=False )
             end_position = read.get_end_position( one_based=False )
-            if read.get_mapq >= self._min_mapping_quality:
+            if position == end_position:
+                region_overlap = -1 # this read has no length, most likely due to not having a cigar available (*)
+            elif read.get_mapq >= self._min_mapping_quality:
                 region_overlap, start, end = get_region_overlap_with_positions( ( position, end_position ), ( region_start, region_end ) ) #can speed this up by not using get_region_overlap method above, instead doing it in-line
                 if region_overlap:
                     if self._read_groups:

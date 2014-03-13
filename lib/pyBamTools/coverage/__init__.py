@@ -181,7 +181,6 @@ class NucleotideCoverage( object ):
                 #M alignment match (can be a sequence match or mismatch); = sequence match; x sequence mismatch
                 #= sequence match
                 #X sequence mismatch
-                i = None
                 for i in range( cigar_size ):
                     nuc = sequence[ i ]
                     cov = self._nucleotide_dict.get( nuc, None )
@@ -190,14 +189,11 @@ class NucleotideCoverage( object ):
                     j = position + position_offset + i
                     if j >= self.size:
                         return #short circuit for size here...
-                    if quality:
-                        base_quality = quality[ i ]
-                    if min_base_quality is None or base_quality >= min_base_quality:
+                    if min_base_quality is None or quality[ i ] >= min_base_quality:
                         cov.increment( j )
-                if i is not None:
-                    sequence = sequence[ i: ]
-                    if quality:
-                        quality = quality[ i: ]
+                sequence = sequence[ cigar_size: ]
+                if quality:
+                    quality = quality[ cigar_size: ]
                 position_offset += cigar_size
             elif cigar_op == 1: #I insertion to the reference
                 #remove inserted seqs and qualities

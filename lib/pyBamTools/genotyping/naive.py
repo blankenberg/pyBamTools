@@ -13,6 +13,7 @@ from ..util import MAX_NEG_INT
 from ..util import NUMPY_DTYPES
 from ..util import is_integer
 from ..util import get_region_overlap_with_positions
+from ..util import guess_numpy_dtypes_from_idxstats
 
 from ..util.sam import SAM_HEADER_NON_TAB_RECORDS
 from ..util.sam import SAM_READ_GROUP_RECORD_CODE
@@ -36,9 +37,12 @@ from ..coverage import NamedRegionOverlap
 TAB_CHAR = "\t"
 COMMA_CHAR = ","
 
+PROGRAM_NAME = "Naive Variant Caller"
+PROGRAM_VERSION = "0.0.1"
+
 class ReadGroupGenotyper( object ):
     __INDEL_OFFSET__ = 0
-    __DEFAULT_NUMPY_DTYPE__ = NUMPY_DTYPES.get( 'uint8' )
+    __DEFAULT_NUMPY_DTYPE__ = NUMPY_DTYPES.get( 'uint64' )
     
     #TODO: make these filters defined generically
     def __init__( self, bam_readers=None, reference_sequence_filename=None, dtype=None, min_support_depth=None, 
@@ -57,11 +61,6 @@ class ReadGroupGenotyper( object ):
         #add seq lengths from fasta index
         for ref_seq_name in self._reference_sequences.get_sequence_names():
             self._sequence_lengths[ ref_seq_name ] = self._reference_sequences.get_sequence_size_by_name( ref_seq_name )
-        if dtype and isinstance( dtype, basestring ):
-            dtype = NUMPY_DTYPES.get( dtype, self.__DEFAULT_NUMPY_DTYPE__ )
-        if not dtype:
-            dtype = self.__DEFAULT_NUMPY_DTYPE__
-        self._dtype = dtype
         if bam_readers is None:
             bam_readers = []
         elif not isinstance( bam_readers, list ):
@@ -70,6 +69,11 @@ class ReadGroupGenotyper( object ):
         for bam_reader in bam_readers:
             self.add_reader( bam_reader )
         self._use_strand = use_strand
+        if dtype and isinstance( dtype, basestring ):
+            dtype = NUMPY_DTYPES.get( dtype, None )
+        if not dtype:
+            dtype = self.__DEFAULT_NUMPY_DTYPE__
+        self._dtypes = guess_numpy_dtypes_from_idxstats( bam_readers, dtype )
         #filters:
         self._min_support_depth = min_support_depth or 0
         self._min_base_quality = min_base_quality
@@ -135,29 +139,29 @@ class ReadGroupGenotyper( object ):
                             if read.is_seq_reverse_complement():
                                 coverage = self._read_group_coverage_reverse.get( rg_name, None )
                                 if coverage is None:
-                                    coverage = self._read_group_coverage_reverse[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype, safe=self._safe )
+                                    coverage = self._read_group_coverage_reverse[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtypes[ read.get_reference_id() ], safe=self._safe )
                             else:
                                 coverage = self._read_group_coverage.get( rg_name, None )
                                 if coverage is None:
-                                    coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype, safe=self._safe )
+                                    coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtypes[ read.get_reference_id() ], safe=self._safe )
                         else:
                             coverage = self._read_group_coverage.get( rg_name, None )
                             if coverage is None:
-                                coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype, safe=self._safe )
+                                coverage = self._read_group_coverage[ rg_name ] = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtypes[ read.get_reference_id() ], safe=self._safe )
                     else:
                         if self._use_strand:
                             if read.is_seq_reverse_complement():
                                 coverage = self._no_read_group_coverage_reverse
                                 if coverage is None:
-                                    coverage = self._no_read_group_coverage_reverse = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype, safe=self._safe )
+                                    coverage = self._no_read_group_coverage_reverse = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtypes[ read.get_reference_id() ], safe=self._safe )
                             else:
                                 coverage = self._no_read_group_coverage
                                 if coverage is None:
-                                    coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype, safe=self._safe )
+                                    coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtypes[ read.get_reference_id() ], safe=self._safe )
                         else:
                             coverage = self._no_read_group_coverage
                             if coverage is None:
-                                coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtype, safe=self._safe )
+                                coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtypes[ read.get_reference_id() ], safe=self._safe )
                     coverage.add_read( read, min_base_quality=self._min_base_quality ) #coverage will be determined and stored for non-overlapping bits here
                     self._covered_regions.add_region( ( seq_name, start, end ) ) #store overlap for faster iteration over coverage
             else:
@@ -222,7 +226,7 @@ class ReadGroupGenotyper( object ):
         #http://www.1000genomes.org/wiki/Analysis/Variant%20Call%20Format/vcf-variant-call-format-version-41
         # move these consts
         #output header
-        header = '##fileformat=%s\n##fileDate=%s\n##source=%s\n##reference=file://%s\n' % ( 'VCFv4.1', date.today().strftime( '%Y%m%d' ), 'Dan', self._reference_sequence_filename )
+        header = '##fileformat=%s\n##fileDate=%s\n##source=%s version %s\n##reference=file://%s\n' % ( 'VCFv4.1', date.today().strftime( '%Y%m%d' ), PROGRAM_NAME, PROGRAM_VERSION, self._reference_sequence_filename )
         if 'AC' in info_fields:
             header += '##INFO=<ID=AC,Number=A,Type=Integer,Description="Allele count in genotypes, for each ALT allele, in the same order as listed">\n'
         if 'AF' in info_fields:

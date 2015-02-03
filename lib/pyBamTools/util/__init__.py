@@ -31,7 +31,7 @@ def get_region_overlap_with_positions( region_1, region_2 ):
     end = min( region_1[1], region_2[1] )
     return ( max( 0, end - start ), start, end )
 
-def guess_numpy_dtypes_from_idxstats( bams, default=None ):
+def guess_numpy_dtypes_from_idxstats( bams, default=None, force_dtype=False ):
     if not isinstance( bams, list ):
         bams = [ bams ]
     rval = None
@@ -52,6 +52,8 @@ def guess_numpy_dtypes_from_idxstats( bams, default=None ):
         if val is None:
             # Default to default
             dtype = default
+        elif force_dtype:
+            dtype = default
         else:
             for ( dtype, size ) in NUMPY_DTYPE_SIZES:
                 if val < size:
@@ -67,9 +69,12 @@ def guess_array_memory_usage( bam_readers, dtype, use_strand=False ):
     if isinstance( dtype, basestring ):
         dtype = NUMPY_DTYPES.get( dtype, None )
     use_strand = use_strand + 1 #if false, factor of 1, if true, factor of 2
-    dtypes = guess_numpy_dtypes_from_idxstats( bam_readers, default=None )
+    dtypes = guess_numpy_dtypes_from_idxstats( bam_readers, default=None, force_dtype=False )
     if not [ dt for dt in dtypes if dt is not None ]:
-        dtypes = guess_numpy_dtypes_from_idxstats( bam_readers, default=dtype )
+        #found no info from idx
+        dtypes = guess_numpy_dtypes_from_idxstats( bam_readers, default=dtype or numpy.uint64, force_dtype=True )
+    elif dtype:
+        dtypes = [ dtype if dt else None for dt in dtypes ]
     read_groups = []
     no_read_group = False
     max_ref_size = 0

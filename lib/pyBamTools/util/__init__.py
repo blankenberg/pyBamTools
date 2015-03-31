@@ -77,7 +77,6 @@ def guess_array_memory_usage( bam_readers, dtype, use_strand=False ):
         dtypes = [ dtype if dt else None for dt in dtypes ]
     read_groups = []
     no_read_group = False
-    max_ref_size = 0
     for bam in bam_readers:
         rgs = bam.get_read_groups()
         if rgs:
@@ -86,8 +85,12 @@ def guess_array_memory_usage( bam_readers, dtype, use_strand=False ):
                     read_groups.append( rg )
         else:
             no_read_group = True
+    read_groups = len( read_groups ) + no_read_group
+    max_ref_size = 0
+    array_byte_overhead = sys.getsizeof( numpy.zeros( ( 0 ), dtype=numpy.uint64 ) )
+    array_count = ARRAY_COUNT * use_strand * read_groups
+    for bam in bam_readers:
         for i, ( name, length ) in enumerate( bam.get_references() ):
             if dtypes[i] is not None:
-                max_ref_size = max( max_ref_size, ( length * dtypes[i]().nbytes) )
-    read_groups = len( read_groups ) + no_read_group
-    return max_ref_size * ARRAY_COUNT * use_strand * read_groups
+                max_ref_size = max( max_ref_size, ( length + length * dtypes[i]().nbytes * array_count + ( array_byte_overhead * ( array_count + 1 ) ) ) )
+    return max_ref_size

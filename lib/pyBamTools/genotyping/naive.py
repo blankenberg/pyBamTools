@@ -38,7 +38,7 @@ TAB_CHAR = "\t"
 COMMA_CHAR = ","
 
 PROGRAM_NAME = "Naive Variant Caller"
-PROGRAM_VERSION = "0.0.1"
+PROGRAM_VERSION = "0.0.2"
 
 class ReadGroupGenotyper( object ):
     __INDEL_OFFSET__ = 0
@@ -130,7 +130,7 @@ class ReadGroupGenotyper( object ):
             end_position = read.get_end_position( one_based=False )
             if position == end_position:
                 region_overlap = -1 # this read has no length, most likely due to not having a cigar available (*)
-            elif read.get_mapq >= self._min_mapping_quality:
+            elif read.get_mapq() >= self._min_mapping_quality:
                 region_overlap, start, end = get_region_overlap_with_positions( ( position, end_position ), ( region_start, region_end ) ) #can speed this up by not using get_region_overlap method above, instead doing it in-line
                 if region_overlap:
                     if self._read_groups:
@@ -167,6 +167,8 @@ class ReadGroupGenotyper( object ):
                                 coverage = self._no_read_group_coverage = NucleotideCoverage( self._sequence_lengths[ seq_name ], dtype=self._dtypes[ read.get_reference_id() ] or self.__DEFAULT_NUMPY_DTYPE__, safe=self._safe )
                     coverage.add_read( read, min_base_quality=self._min_base_quality ) #coverage will be determined and stored for non-overlapping bits here
                     self._covered_regions.add_region( ( seq_name, start, end ) ) #store overlap for faster iteration over coverage
+                elif end_position <= region_start:
+                    region_overlap = -1 # ends before region starts, since sorted, we'll keep processing BAM
             else:
                 region_overlap = -1 #-1 indicates that overlap was not checked
         return region_overlap

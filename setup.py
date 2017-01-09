@@ -4,9 +4,12 @@ if sys.version_info < (2, 5):
     print >> sys.stderr, "ERROR: pyBamTools requires python 2.5 or greater"
     sys.exit()
 
-# Automatically download setuptools if not available
-from distribute_setup import use_setuptools
-use_setuptools()
+try:
+    import setuptools
+except ImportError:
+    # Automatically download setuptools if not available
+    from distribute_setup import use_setuptools
+    use_setuptools()
 
 from setuptools import setup, find_packages
 from glob import glob

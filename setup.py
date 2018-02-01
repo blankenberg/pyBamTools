@@ -21,7 +21,7 @@ if sys.version_info >= (3,):
        
 def main():
     setup(  name = "pyBamTools",
-            version = "0.0.1",
+            version = "0.0.2",
             packages = find_packages( 'lib' ),
             package_dir = { '': 'lib' },
             scripts = glob( "scripts/*.py" ),

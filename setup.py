@@ -25,13 +25,16 @@ def main():
             packages = find_packages( 'lib' ),
             package_dir = { '': 'lib' },
             scripts = glob( "scripts/*.py" ),
-            setup_requires = ['numpy'],
+            setup_requires = ['numpy', 'pyBamParser'],
             author = "Daniel Blankenberg",
             author_email = "dan.blankenberg@gmail.com",
-            description = "Tools for parsing BAM data",
-            url = "http://add_URL_HERE",
+            description = "Tools for working on BAM data",
+            license = "GPLv2",
+            url = "https://github.com/blankenberg/pyBamTools",
             zip_safe = False,
             dependency_links = [],
+            classifiers=[ "Development Status :: 4 - Beta",
+            "License :: OSI Approved :: GNU General Public License v2 (GPLv2)" ],
             **extra )
 
 if __name__ == "__main__":

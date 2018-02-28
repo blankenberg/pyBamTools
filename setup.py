@@ -21,11 +21,12 @@ if sys.version_info >= (3,):
        
 def main():
     setup(  name = "pyBamTools",
-            version = "0.0.2",
+            version = "0.0.3",
             packages = find_packages( 'lib' ),
             package_dir = { '': 'lib' },
             scripts = glob( "scripts/*.py" ),
-            setup_requires = ['numpy', 'pyBamParser'],
+            setup_requires = [],
+            install_requires = ['numpy', 'pyBamParser==0.0.3'],
             author = "Daniel Blankenberg",
             author_email = "dan.blankenberg@gmail.com",
             description = "Tools for working on BAM data",

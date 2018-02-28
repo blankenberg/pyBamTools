@@ -38,7 +38,7 @@ TAB_CHAR = "\t"
 COMMA_CHAR = ","
 
 PROGRAM_NAME = "Naive Variant Caller"
-PROGRAM_VERSION = "0.0.2"
+PROGRAM_VERSION = "0.0.3"
 
 class ReadGroupGenotyper( object ):
     __INDEL_OFFSET__ = 0

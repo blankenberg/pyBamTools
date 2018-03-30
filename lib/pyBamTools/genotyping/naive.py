@@ -22,6 +22,7 @@ from ..util.sam import SAM_READ_GROUP_ID_STR
 from ..util.sam import SAM_READ_GROUP_SAMPLE_STR
 
 from ..util.vcf import VCF_NO_VALUE
+from ..util.vcf import VCF_NO_REF_VALUE
 from ..util.vcf import VCF_UNPHASED_SEPARATOR
 from ..util.vcf import VCF_PHASED_SEPARATOR
 from ..util.vcf import VCF_GT_PHASED_SEPARATOR 
@@ -34,11 +35,24 @@ from ..util.nuc import INSERTIONS_KWD
 from ..coverage import NucleotideCoverage
 from ..coverage import NamedRegionOverlap
 
+
 TAB_CHAR = "\t"
 COMMA_CHAR = ","
+ZERO_STR = str(0.0)
+INF_STR = '+Inf'
 
 PROGRAM_NAME = "Naive Variant Caller"
-PROGRAM_VERSION = "0.0.3"
+PROGRAM_VERSION = "0.0.4"
+
+SB_SORT_KEY = lambda base_count: base_count[1]
+SB = 'SB'
+AC = 'AC'
+GT = 'GT'
+NC = 'NC'
+AF = 'AF'
+DEFAULT_INFO_FIELDS = [AC, AF, SB]
+DEFAULT_FORMAT_FIELDS = [GT, AC, AF, SB, NC]
+
 
 class ReadGroupGenotyper( object ):
     __INDEL_OFFSET__ = 0
@@ -227,23 +241,44 @@ class ReadGroupGenotyper( object ):
             self._no_read_group_coverage_reverse = None
             #CONFIRM NOT NEED TO RESET THIS: self._restrict_regions = NamedRegionOverlap( self._sequence_lengths, regions=self._restrict_regions_list ) # reset to initial values
             self._covered_regions = NamedRegionOverlap( self._sequence_lengths )
-    def iter_vcf( self, ploidy=2, variants_only=False, command_line=None, info_fields=['AC', 'AF'], format_fields=['GT', 'AC', 'AF', 'NC']  ):
+    def iter_vcf( self, ploidy=2, variants_only=False, command_line=None, info_fields=None, format_fields=None ):
         #http://www.1000genomes.org/wiki/Analysis/Variant%20Call%20Format/vcf-variant-call-format-version-41
         # move these consts
         #output header
-        header = '##fileformat=%s\n##fileDate=%s\n##source=%s version %s\n##reference=file://%s\n' % ( 'VCFv4.1', date.today().strftime( '%Y%m%d' ), PROGRAM_NAME, PROGRAM_VERSION, self._reference_sequence_filename )
-        if 'AC' in info_fields:
+        if info_fields is None:
+            info_fields = DEFAULT_INFO_FIELDS
+        if not self._use_strand:
+            info_fields = info_fields[:]
+            try:
+                info_fields.remove( SB )
+            except ValueError:
+                pass
+        if format_fields is None:
+            format_fields = DEFAULT_FORMAT_FIELDS
+        if not self._use_strand:
+            format_fields = format_fields[:]
+            try:
+                format_fields.remove( SB )
+            except ValueError:
+                pass
+
+        header = '##fileformat=%s\n##fileDate=%s\n##source=%s version %s\n##reference=file://%s\n' % ( 'VCFv4.3', date.today().strftime( '%Y%m%d' ), PROGRAM_NAME, PROGRAM_VERSION, self._reference_sequence_filename )
+        if AC in info_fields:
             header += '##INFO=<ID=AC,Number=A,Type=Integer,Description="Allele count in genotypes, for each ALT allele, in the same order as listed">\n'
-        if 'AF' in info_fields:
+        if AF in info_fields:
             header += '##INFO=<ID=AF,Number=A,Type=Float,Description="Allele Frequency, for each ALT allele, in the same order as listed">\n'
+        if SB in info_fields:
+            header += '##INFO=<ID=SB,Number=1,Type=Float,Description="Strand Bias">\n'
         #how much of header is needed?
-        if 'GT' in format_fields:
+        if GT in format_fields:
             header += '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
-        if 'AC' in format_fields:
+        if AC in format_fields:
             header += '##FORMAT=<ID=AC,Number=.,Type=Integer,Description="Allele count in genotypes, for each ALT allele, in the same order as listed">\n'
-        if 'AF' in format_fields:
+        if AF in format_fields:
             header += '##FORMAT=<ID=AF,Number=.,Type=Float,Description="Allele Frequency, for each ALT allele, in the same order as listed">\n'
-        if 'NC' in format_fields:
+        if SB in format_fields:
+            header += '##FORMAT=<ID=SB,Number=1,Type=Float,Description="Strand Bias">\n'
+        if NC in format_fields:
             header += '##FORMAT=<ID=NC,Number=.,Type=String,Description="Nucleotide and indel counts">\n'
         
         if command_line:
@@ -269,6 +304,7 @@ class ReadGroupGenotyper( object ):
             #vcf_id = VCF_NO_VALUE #add id back here, when list of ids can be provided via e.g. external file
             ref = _get_ref_allele_for_position( seq_name, pos, die_on_error = not self._allow_out_of_bounds_positions )
             indeled_ref, alt_tuples = _calculate_allele_coverage( nucs.values(), nucs_reverse.values(), ref, position=pos, sequence_name=seq_name, skip_list=ref, min_support_depth=self._min_support_depth )
+
             #for now, lets to a special check for anything not having a string for a name:
             # FIXME: clean this up after confirming fix
             #alt = []
@@ -367,7 +403,7 @@ class ReadGroupGenotyper( object ):
                 name = name + reference_nucleotide[len_old_reference_nucleotide:]
             rval.append( ( name, value ) )
         return reference_nucleotide, rval
-    
+
     def _calculate_allele_coverage( self, coverages, coverages_reverse, reference_nucleotide, position=None, sequence_name=None, skip_list = None, min_support_depth=None ):
         if not isinstance( coverages, list ):
             coverages = [ coverages ]
@@ -428,8 +464,24 @@ class ReadGroupGenotyper( object ):
         return ( reference_nucleotide, coverage )
         
     def _get_ref_allele_for_position( self, sequence_name, position, length=1, die_on_error=True ):
-        return self._reference_sequences.get_sequence_by_position( sequence_name, position, length=length, unknown_sequence_character=VCF_NO_VALUE, die_on_error=die_on_error )
-    def _get_info_format_value_fields( self, samples, samples_dict, samples_dict_reverse, ref, alt, indeled_ref, info_fields=['AC', 'AF'], format_fields=['GT', 'AC', 'AF', 'NC'], ploidy=2, min_support_depth=None ):
+        return self._reference_sequences.get_sequence_by_position( sequence_name, position, length=length, unknown_sequence_character=VCF_NO_REF_VALUE, die_on_error=die_on_error )
+    def _get_info_format_value_fields( self, samples, samples_dict, samples_dict_reverse, ref, alt, indeled_ref, info_fields=None, format_fields=None, ploidy=2, min_support_depth=None ):
+        if info_fields is None:
+            info_fields = DEFAULT_INFO_FIELDS
+        if not self._use_strand:
+            info_fields = info_fields[:]
+            try:
+                info_fields.remove( SB )
+            except ValueError:
+                pass
+        if format_fields is None:
+            format_fields = DEFAULT_FORMAT_FIELDS
+        if not self._use_strand:
+            format_fields = format_fields[:]
+            try:
+                format_fields.remove( SB )
+            except ValueError:
+                pass
         gt_no_value = VCF_GT_PHASED_SEPARATOR[False].join( [ VCF_NO_VALUE for i in range( ploidy ) ] )
         ac_af_no_value = COMMA_CHAR.join( [ VCF_NO_VALUE for i in range( len( alt ) ) ] )
         ref_list = [indeled_ref]
@@ -445,7 +497,20 @@ class ReadGroupGenotyper( object ):
         len_old_reference_nucleotide = len( ref )
         len_reference_nucleotide = len( indeled_ref )
         max_deletion_len = len_reference_nucleotide - len_old_reference_nucleotide
+
+        #for Strand Bias
+        if SB in info_fields:
+            all_f_counts = {}
+            all_r_counts = {}
+            info_sb = True
+        else:
+            info_sb = False
         
+        if SB in format_fields:
+            format_sb = True
+        else:
+            format_sb = False
+
         for sample in samples:
             sample_format = []
             if sample in samples_dict or sample in samples_dict_reverse:
@@ -499,6 +564,10 @@ class ReadGroupGenotyper( object ):
                         af_list[ i ] = float( value ) / nucs_sum
                     except ValueError:
                         continue #this is ref allele
+
+                #Strand Bias
+                if format_sb:
+                    sb_dict = {}
                 #NC
                 nc_field = "" #"%s:" % fields[-1]
                 if self._use_strand:
@@ -507,15 +576,39 @@ class ReadGroupGenotyper( object ):
                     prefix = ''
                 for c, count in coverage_dict.iteritems():
                     if count:#should we filter by self._min_support_dept here? or display all
+                        if format_sb:
+                            sb_dict[c] = sb_dict.get( c, 0) + count
+                        if info_sb:
+                            all_f_counts[c] = all_f_counts.get( c, 0) + count
                         if is_integer( c ):
                             c = 'd%s' % ( c )
                         nc_field = "%s%s%s=%d," % ( nc_field, prefix, c, count )
                 prefix = '-'
                 for c, count in coverage_dict_reverse.iteritems():
                     if count:#should we filter by self._min_support_dept here? or display all
+                        if format_sb:
+                            sb_dict[c] = sb_dict.get( c, 0) + count
+                        if info_sb:
+                            all_r_counts[c] = all_r_counts.get( c, 0) + count
                         if is_integer( c ):
                             c = 'd%s' % ( c )
                         nc_field = "%s%s%s=%d," % ( nc_field, prefix, c, count )
+                if format_sb:
+                    if len(sb_dict) < 2:
+                        strand_bias = ZERO_STR
+                    else:
+                        base_tup = sorted( sb_dict.items(), key=SB_SORT_KEY, reverse=True )
+                        major_allele = base_tup[0][0]
+                        minor_allele = base_tup[1][0]
+                        a = float(coverage_dict.get(major_allele,0))
+                        b = float(coverage_dict.get(minor_allele,0))
+                        c = float(coverage_dict_reverse.get(minor_allele,0))
+                        d = float(coverage_dict_reverse.get(major_allele,0))
+                        try:
+                            strand_bias = str(abs( (b/(a+b)) - (d/(c+d)) ) / ( (b+d) / (a+b+c+d) ))
+                        except ZeroDivisionError:
+                            strand_bias = INF_STR
+
                 
                 gt_possible = ref_list + alt_list
                 calls = []
@@ -546,31 +639,52 @@ class ReadGroupGenotyper( object ):
                     gt_list.append( call )
                 
                 sample_format.append( VCF_GT_PHASED_SEPARATOR[False].join( map( str, gt_list ) ) )
-                if 'AC' in format_fields:
-                    sample_format.append( COMMA_CHAR.join( map( str, ac_list ) ) )
-                if 'AF' in format_fields:
-                    sample_format.append( COMMA_CHAR.join( map( str, af_list ) ) )
+                if AC in format_fields:
+                    sample_format.append( COMMA_CHAR.join( map( str, ac_list ) ) or VCF_NO_VALUE )
+                if AF in format_fields:
+                    sample_format.append( COMMA_CHAR.join( map( str, af_list ) ) or VCF_NO_VALUE )
+                if format_sb:
+                    sample_format.append( strand_bias )
                 #NC
-                if 'NC' in format_fields:
+                if NC in format_fields:
                     sample_format.append( nc_field )
             else:
                 sample_format.append( gt_no_value )
-                if 'AC' in format:
+                if AC in format:
                     sample_format.append( ac_af_no_value ) #AC
-                if 'AF' in format:
+                if AF in format:
                     sample_format.append( ac_af_no_value ) #AF
                 sample_format.append( VCF_NO_VALUE )
             format.append( sample_format )
         info = []
-        ac = COMMA_CHAR.join( map( str, all_alt_nucs_count ) )
-        if 'AC' in info_fields:
+        ac = COMMA_CHAR.join( map( str, all_alt_nucs_count ) ) or VCF_NO_VALUE
+        if AC in info_fields:
             info.append( "AC=%s" % ( ac ) )
-        if 'AF' in info_fields:
-            if all_nucs_count:
+        if AF in info_fields:
+            if all_nucs_count and all_alt_nucs_count:
                 af = COMMA_CHAR.join( map( lambda x: str( float( x ) / float( all_nucs_count ) ), all_alt_nucs_count ) )
             else:
-                af = ac
+                af = VCF_NO_VALUE
             info.append( "AF=%s" % ( af ) )
+        if info_sb:
+            sb_dict = all_f_counts.copy()
+            for k,v in all_r_counts.iteritems():
+                sb_dict[k] = sb_dict.get( k, 0 ) + v
+            if len(sb_dict)<2:
+                strand_bias = ZERO_STR
+            else:
+                base_tup = sorted( sb_dict.items(), key=SB_SORT_KEY, reverse=True )
+                major_allele = base_tup[0][0]
+                minor_allele = base_tup[1][0]
+                a = float(coverage_dict.get(major_allele,0))
+                b = float(coverage_dict.get(minor_allele,0))
+                c = float(coverage_dict_reverse.get(minor_allele,0))
+                d = float(coverage_dict_reverse.get(major_allele,0))
+                try:
+                    strand_bias = str( abs( (b/(a+b)) - (d/(c+d)) ) / ( (b+d) / (a+b+c+d) ) )
+                except ZeroDivisionError:
+                    strand_bias = INF_STR
+            info.append( "SB=%s" % ( strand_bias ) )
         return info, format
         
 class VCFReadGroupGenotyper( ReadGroupGenotyper ):

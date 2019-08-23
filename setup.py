@@ -1,7 +1,7 @@
 import sys
 
 if sys.version_info < (2, 5):
-    print >> sys.stderr, "ERROR: pyBamTools requires python 2.5 or greater"
+    print("ERROR: pyBamTools requires python 2.5 or greater", file=sys.stderr)
     sys.exit()
 
 try:

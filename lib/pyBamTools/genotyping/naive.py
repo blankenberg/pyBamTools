@@ -83,7 +83,7 @@ class ReadGroupGenotyper( object ):
         for bam_reader in bam_readers:
             self.add_reader( bam_reader )
         self._use_strand = use_strand
-        if dtype and isinstance( dtype, basestring ):
+        if dtype and isinstance( dtype, str ):
             dtype = NUMPY_DTYPES.get( dtype, None )
         if dtype:
             force_dtype = True
@@ -98,10 +98,10 @@ class ReadGroupGenotyper( object ):
         if self._min_mapping_quality is None:
             self._min_mapping_quality = MAX_NEG_INT
         if not restrict_regions:
-            restrict_regions = [ ( ref_seq_name, 0, ref_seq_length ) for ref_seq_name, ref_seq_length in self._sequence_lengths.iteritems() ]
+            restrict_regions = [ ( ref_seq_name, 0, ref_seq_length ) for ref_seq_name, ref_seq_length in self._sequence_lengths.items() ]
         else:
-            for i in xrange( len( restrict_regions ) ):
-                if isinstance( restrict_regions[i], basestring ):
+            for i in range( len( restrict_regions ) ):
+                if isinstance( restrict_regions[i], str ):
                     restrict_regions[i] = ( restrict_regions[i], 0, self._sequence_lengths[ restrict_regions[i] ] )
             restrict_regions = self._reference_sequences.sort_region_list( restrict_regions )
         self._restrict_regions_list = restrict_regions
@@ -111,9 +111,9 @@ class ReadGroupGenotyper( object ):
         self._safe = safe
         
         #issue warnings about zero length sequences
-        for ref_seq_name, ref_seq_size in self._sequence_lengths.iteritems():
+        for ref_seq_name, ref_seq_size in self._sequence_lengths.items():
             if ref_seq_size < 1:
-                print >>stderr, "Warning: %s was initialized with suspect sequence length (%i)." % ( ref_seq_name, ref_seq_size )
+                print("Warning: %s was initialized with suspect sequence length (%i)." % ( ref_seq_name, ref_seq_size ), file=stderr)
         
     def add_reader( self, bam_reader ):
         self._readers.append( bam_reader )
@@ -189,11 +189,11 @@ class ReadGroupGenotyper( object ):
     
     def _iter_current_coverage( self ):
         for region_name, region_start, region_end in self._covered_regions.iter_covered_regions():
-            for i in xrange( region_start, region_end ):
+            for i in range( region_start, region_end ):
                 coverage = odict()
                 coverage_reverse = odict()
                 if self._read_group_coverage:
-                    for rg_name in self._read_groups.keys():
+                    for rg_name in list(self._read_groups.keys()):
                         cov = self._read_group_coverage.get( rg_name, None )
                         if cov:
                             cov_val = cov.get( i, insertions=False, deletions=False )
@@ -227,7 +227,7 @@ class ReadGroupGenotyper( object ):
                     overlap = self._process_read( bam_read, seq_name, start, end )
                     while overlap:
                         try:
-                            bam_read = reader.next()
+                            bam_read = next(reader)
                         except StopIteration:
                             break
                         overlap = self._process_read( bam_read, seq_name, start, end )
@@ -303,7 +303,7 @@ class ReadGroupGenotyper( object ):
         for seq_name, pos, ( nucs, nucs_reverse ) in self.iter_coverage():
             #vcf_id = VCF_NO_VALUE #add id back here, when list of ids can be provided via e.g. external file
             ref = _get_ref_allele_for_position( seq_name, pos, die_on_error = not self._allow_out_of_bounds_positions )
-            indeled_ref, alt_tuples = _calculate_allele_coverage( nucs.values(), nucs_reverse.values(), ref, position=pos, sequence_name=seq_name, skip_list=ref, min_support_depth=self._min_support_depth )
+            indeled_ref, alt_tuples = _calculate_allele_coverage( list(nucs.values()), list(nucs_reverse.values()), ref, position=pos, sequence_name=seq_name, skip_list=ref, min_support_depth=self._min_support_depth )
 
             #for now, lets to a special check for anything not having a string for a name:
             # FIXME: clean this up after confirming fix
@@ -313,7 +313,7 @@ class ReadGroupGenotyper( object ):
             #        alt.append( alt_name )
             #    else:
             #        print >>stderr, 'An alternate allele of invalid name "%s" was encountered having count "%s" at position "%s" and has been removed.' % ( alt_name, alt_count, pos )
-            alt = map( alt_lambda, alt_tuples )
+            alt = list(map( alt_lambda, alt_tuples ))
             
             if variants_only:
                 no_alt = True
@@ -355,14 +355,14 @@ class ReadGroupGenotyper( object ):
         rval = odict()
         for sample in samples:
             sample_dict = {}
-            for rg_name, rg in rg_dict.iteritems():
+            for rg_name, rg in rg_dict.items():
                 if rg_name in self._read_groups and self._read_groups[rg_name][SAM_READ_GROUP_SAMPLE_STR] == sample:
                     coverage = rg_dict[ rg_name ]
                 elif rg_name not in self._read_groups and rg_name == sample:
                     coverage = rg_dict[ SAM_NO_READ_GROUP_NAME ]
                 else:
                     continue
-                for name, value in coverage.iteritems():                    
+                for name, value in coverage.items():                    
                     if isinstance( value, list ):
                         variants = {}
                         for v in value:
@@ -370,7 +370,7 @@ class ReadGroupGenotyper( object ):
                             if name == INSERTIONS_KWD:
                                 v = reference_nucleotide + v
                             variants[v] = variants.get( v, 0 ) + 1
-                        for v, cov in variants.iteritems():
+                        for v, cov in variants.items():
                             sample_dict[v] = sample_dict.get( v, 0 ) + cov
                         
                     else:
@@ -422,7 +422,7 @@ class ReadGroupGenotyper( object ):
         insertion_count = 0
         deletion_count = 0
         for coverage in coverages:
-            for nuc, cov in coverage.iteritems():
+            for nuc, cov in coverage.items():
                 if isinstance( cov, list ):
                     #this is an indel
                     variants = {}
@@ -436,9 +436,9 @@ class ReadGroupGenotyper( object ):
                             if v not in variants:
                                 deletion_count += 1
                         else:
-                            print >>stderr, "An unreachable condition has been reached in _calculate_allele_coverage at position '%s'. coverages=%s. coverages_reverse=%s" % ( position, coverages, coverages_reverse )
+                            print("An unreachable condition has been reached in _calculate_allele_coverage at position '%s'. coverages=%s. coverages_reverse=%s" % ( position, coverages, coverages_reverse ), file=stderr)
                         variants[v] = variants.get( v, 0 ) + 1
-                    for v, cov in variants.iteritems():
+                    for v, cov in variants.items():
                         coverage_dict[v] = coverage_dict.get( v, 0 ) + cov
                 else:
                     #this is a standard nucleotide
@@ -446,7 +446,7 @@ class ReadGroupGenotyper( object ):
         #filter by depth
         if min_support_depth:
             coverage_dict2 = {}
-            for name, value in coverage_dict.iteritems():
+            for name, value in coverage_dict.items():
                 if value >= min_support_depth:
                     coverage_dict2[name] = value
                 elif is_integer( name ):
@@ -458,7 +458,7 @@ class ReadGroupGenotyper( object ):
             del coverage_dict2
         
         #do some filter on min coverage?
-        coverage = [ ( x[1], x[0] ) for x in sorted( map( lambda x: ( x[1], x[0] ), coverage_dict.iteritems() ), reverse=True ) if x[1] not in skip_list ] #is ordering important?
+        coverage = [ ( x[1], x[0] ) for x in sorted( [( x[1], x[0] ) for x in iter(coverage_dict.items())], reverse=True ) if x[1] not in skip_list ] #is ordering important?
         if position is not None and sequence_name and ( insertion_count or deletion_count ):
             reference_nucleotide, coverage = self._rework_indels( coverage, reference_nucleotide, insertion_count, deletion_count, position, sequence_name )
         return ( reference_nucleotide, coverage )
@@ -518,12 +518,12 @@ class ReadGroupGenotyper( object ):
                 coverage_dict_reverse = samples_dict_reverse.get( sample, {} )
                 
                 genotyping_coverage_dict = dict( coverage_dict )
-                for nuc, count in coverage_dict_reverse.iteritems():
+                for nuc, count in coverage_dict_reverse.items():
                     genotyping_coverage_dict[ nuc ] = genotyping_coverage_dict.get( nuc, 0 ) + count
                 
                 if min_support_depth is None:
                     min_support_depth = 0
-                nucs = sorted( map( lambda x: ( x[1], x[0] ), genotyping_coverage_dict.iteritems() ), reverse=True )#list of count, nuc
+                nucs = sorted( [( x[1], x[0] ) for x in iter(genotyping_coverage_dict.items())], reverse=True )#list of count, nuc
                 #nucs_reverse = sorted( map( lambda x: ( x[1], x[0] ), coverage_dict_reverse.iteritems() ), reverse=True )#list of count, nuc
                 #nucs = filter( lambda x: not isinstance( x[0], list ), nucs ) #filter out indels for now. FIXME: add sort by len or int count to allow indels here
                 #resolve indels
@@ -574,7 +574,7 @@ class ReadGroupGenotyper( object ):
                     prefix = '+'
                 else:
                     prefix = ''
-                for c, count in coverage_dict.iteritems():
+                for c, count in coverage_dict.items():
                     if count:#should we filter by self._min_support_dept here? or display all
                         if format_sb:
                             sb_dict[c] = sb_dict.get( c, 0) + count
@@ -584,7 +584,7 @@ class ReadGroupGenotyper( object ):
                             c = 'd%s' % ( c )
                         nc_field = "%s%s%s=%d," % ( nc_field, prefix, c, count )
                 prefix = '-'
-                for c, count in coverage_dict_reverse.iteritems():
+                for c, count in coverage_dict_reverse.items():
                     if count:#should we filter by self._min_support_dept here? or display all
                         if format_sb:
                             sb_dict[c] = sb_dict.get( c, 0) + count
@@ -597,13 +597,13 @@ class ReadGroupGenotyper( object ):
                     if len(sb_dict) < 2:
                         strand_bias = ZERO_STR
                     else:
-                        base_tup = sorted( sb_dict.items(), key=SB_SORT_KEY, reverse=True )
+                        base_tup = sorted( list(sb_dict.items()), key=SB_SORT_KEY, reverse=True )
                         major_allele = base_tup[0][0]
                         minor_allele = base_tup[1][0]
-                        a = float(coverage_dict.get(major_allele,0))
-                        b = float(coverage_dict.get(minor_allele,0))
-                        c = float(coverage_dict_reverse.get(minor_allele,0))
-                        d = float(coverage_dict_reverse.get(major_allele,0))
+                        a = float(coverage_dict.get(major_allele, 0))
+                        b = float(coverage_dict.get(minor_allele, 0))
+                        c = float(coverage_dict_reverse.get(minor_allele, 0))
+                        d = float(coverage_dict_reverse.get(major_allele, 0))
                         try:
                             strand_bias = str(abs( (b/(a+b)) - (d/(c+d)) ) / ( (b+d) / (a+b+c+d) ))
                         except ZeroDivisionError:
@@ -614,7 +614,7 @@ class ReadGroupGenotyper( object ):
                 calls = []
                 len_nucs = len( indeled_nucs )
                 count_per_allele = float( nucs_sum ) / ploidy
-                nucs = map( lambda x: ( x[0] / count_per_allele, x[1] ), indeled_nucs )
+                nucs = [( x[0] / count_per_allele, x[1] ) for x in indeled_nucs]
                 remain_ploidy = ploidy
                 while remain_ploidy > 0:
                     nucs = sorted( nucs, reverse=True )
@@ -662,24 +662,24 @@ class ReadGroupGenotyper( object ):
             info.append( "AC=%s" % ( ac ) )
         if AF in info_fields:
             if all_nucs_count and all_alt_nucs_count:
-                af = COMMA_CHAR.join( map( lambda x: str( float( x ) / float( all_nucs_count ) ), all_alt_nucs_count ) )
+                af = COMMA_CHAR.join( [str( float( x ) / float( all_nucs_count ) ) for x in all_alt_nucs_count] )
             else:
                 af = VCF_NO_VALUE
             info.append( "AF=%s" % ( af ) )
         if info_sb:
             sb_dict = all_f_counts.copy()
-            for k,v in all_r_counts.iteritems():
+            for k, v in all_r_counts.items():
                 sb_dict[k] = sb_dict.get( k, 0 ) + v
             if len(sb_dict)<2:
                 strand_bias = ZERO_STR
             else:
-                base_tup = sorted( sb_dict.items(), key=SB_SORT_KEY, reverse=True )
+                base_tup = sorted( list(sb_dict.items()), key=SB_SORT_KEY, reverse=True )
                 major_allele = base_tup[0][0]
                 minor_allele = base_tup[1][0]
-                a = float(coverage_dict.get(major_allele,0))
-                b = float(coverage_dict.get(minor_allele,0))
-                c = float(coverage_dict_reverse.get(minor_allele,0))
-                d = float(coverage_dict_reverse.get(major_allele,0))
+                a = float(coverage_dict.get(major_allele, 0))
+                b = float(coverage_dict.get(minor_allele, 0))
+                c = float(coverage_dict_reverse.get(minor_allele, 0))
+                d = float(coverage_dict_reverse.get(major_allele, 0))
                 try:
                     strand_bias = str( abs( (b/(a+b)) - (d/(c+d)) ) / ( (b+d) / (a+b+c+d) ) )
                 except ZeroDivisionError:

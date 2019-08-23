@@ -28,7 +28,7 @@ class NamedRegionOverlap( object ):
                 self.add_region( region )
         
     def add_region( self, region ):
-        if isinstance( region, basestring ):
+        if isinstance( region, str ):
             if region not in self._complete_regions:
                 self._complete_regions.append( region )
             if region in self._regions:
@@ -70,8 +70,8 @@ class NamedRegionOverlap( object ):
     
     def iter_covered_regions( self, region_names=None ):
         if not region_names:
-            region_names = self._sequence_lengths.keys()
-        elif isinstance( region_names, basestring ):
+            region_names = list(self._sequence_lengths.keys())
+        elif isinstance( region_names, str ):
             region_names = [ region_names ]
         for region_name in region_names:
             if region_name in self._complete_regions:
@@ -100,7 +100,7 @@ class SequenceCoverage( object ):
     
     def __init__( self, size=None, dtype=numpy.uint8, safe=True ):
         if not size:
-            print >> sys.stderr, "Warning: SequenceCoverage requested without a valid size, using default size of '%i'." % ( DEFAULT_SEQUENCE_LENGTH )
+            print("Warning: SequenceCoverage requested without a valid size, using default size of '%i'." % ( DEFAULT_SEQUENCE_LENGTH ), file=sys.stderr)
             size = DEFAULT_SEQUENCE_LENGTH
         self._dtype = dtype
         self._max_value = dtype( MAX_INT )
@@ -120,21 +120,21 @@ class SequenceCoverage( object ):
     
     def get( self, position, default=None ):
         if position >= self._size or position < 0:
-            print >>sys.stderr, 'Warning: coverage of out of bounds (size=%s) position has been requested: %s' % ( self._size, position )
+            print('Warning: coverage of out of bounds (size=%s) position has been requested: %s' % ( self._size, position ), file=sys.stderr)
             return default #fixme: 0 or None for default here?
         return self._coverage_array[ position ]
     
     def set( self, position, value ):
         if position >= self._size or position < 0:
-            print >>sys.stderr, 'Warning: setting coverage of out of bounds (size=%s) position has been requested: %s to be set to %s. This information has been ignored.' % ( self._size, position, value )
+            print('Warning: setting coverage of out of bounds (size=%s) position has been requested: %s to be set to %s. This information has been ignored.' % ( self._size, position, value ), file=sys.stderr)
             return None
         try:
             if value > self._max_value:
-                print >> sys.stderr, "Value of %i at position %i is too large to fit into array, setting to max value (%i)." % ( value, position, self._max_value )
+                print("Value of %i at position %i is too large to fit into array, setting to max value (%i)." % ( value, position, self._max_value ), file=sys.stderr)
                 value = self._max_value
             self._coverage_array[ position ] = value
         except OverflowError:
-            print >> sys.stderr, "Value of %i at position %i is too large to fit into array, keeping current value (%i)." % ( value, position, self._coverage_array[ position ] )
+            print("Value of %i at position %i is too large to fit into array, keeping current value (%i)." % ( value, position, self._coverage_array[ position ] ), file=sys.stderr)
         return self._coverage_array[ position ]
     
     def _increment( self, position ):
@@ -142,9 +142,9 @@ class SequenceCoverage( object ):
     
     def _increment_check( self, position ):
         if self._coverage_array[ position ] == self._max_value:
-            print >> sys.stderr, "Value of %i at position %i is too large to fit into array, setting to max value (%i)." % ( self._max_value, position, self._max_value )
+            print("Value of %i at position %i is too large to fit into array, setting to max value (%i)." % ( self._max_value, position, self._max_value ), file=sys.stderr)
         if position >= self._size or position < 0:
-            print >>sys.stderr, 'Warning: coverage of out of bounds (size=%s) position has been requested: %s' % ( self._size, position )
+            print('Warning: coverage of out of bounds (size=%s) position has been requested: %s' % ( self._size, position ), file=sys.stderr)
         self._coverage_array[ position ] += self._one
     
     def sum( self, beg=None, end=None ):
@@ -157,7 +157,7 @@ class NucleotideCoverage( object ):
     
     def __init__( self, size=None, dtype=numpy.uint8, reference_name=None, safe=True ): 
         if not size:
-            print >> sys.stderr, "Warning: NucleotideCoverage requested without a valid size, using default size of '%i'." % ( DEFAULT_SEQUENCE_LENGTH )
+            print("Warning: NucleotideCoverage requested without a valid size, using default size of '%i'." % ( DEFAULT_SEQUENCE_LENGTH ), file=sys.stderr)
             size = DEFAULT_SEQUENCE_LENGTH
         self._nucleotide_dict = {}
         self.size = size
@@ -252,12 +252,12 @@ class NucleotideCoverage( object ):
                     return
     
     def iteritems( self ):
-        return self._nucleotide_dict.iteritems()
+        return iter(self._nucleotide_dict.items())
     
     def get( self, position, nucleotides=True, insertions=True, deletions=True ):
         nucs = {}
         if nucleotides:
-            for nuc, cov in self.iteritems():
+            for nuc, cov in self.items():
                 cov = cov.get( position )
                 if cov:
                     nucs[nuc] = cov
@@ -270,7 +270,7 @@ class NucleotideCoverage( object ):
         return nucs
     
     def iter_coverage( self ):
-        for i in xrange( self.size ):
+        for i in range( self.size ):
             nucs = self.get( i )
             if nucs:
                 yield i, nucs

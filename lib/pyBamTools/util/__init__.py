@@ -5,7 +5,7 @@ import numpy
 
 NULL_CHAR = '\x00'
 
-MAX_INT = sys.maxint
+MAX_INT = sys.maxsize
 
 MAX_NEG_INT = -MAX_INT
 
@@ -17,7 +17,7 @@ NUMPY_DTYPE_SIZES = [ ( numpy.uint8, 255 ),
                       ( numpy.uint64, 18446744073709551615 )
                       ]
 
-INTEGER_TYPES = tuple( NUMPY_DTYPES.values() + [ int, long ] )
+INTEGER_TYPES = tuple( list(NUMPY_DTYPES.values()) + [ int, int ] )
 
 def is_integer( value ):
     """Check if value is a valid unsigned int, int, or long"""
@@ -36,7 +36,7 @@ def guess_numpy_dtypes_from_idxstats( bams, default=None, force_dtype=False ):
         bams = [ bams ]
     rval = None
     for bam_index in bams:
-        if hasattr( bam_index , '_bam_index' ):
+        if hasattr( bam_index, '_bam_index' ):
             bam_index = bam_index._bam_index
         refs = bam_index._references
         assert isinstance( refs, list ), ValueError( "Invalid object provided to guess_numpy_dtypes_from_idxstats()" )
@@ -66,7 +66,7 @@ def guess_array_memory_usage( bam_readers, dtype, use_strand=False ):
     ARRAY_COUNT = 5
     if not isinstance( bam_readers, list ):
         bam_readers = [ bam_readers ]
-    if isinstance( dtype, basestring ):
+    if isinstance( dtype, str ):
         dtype = NUMPY_DTYPES.get( dtype, None )
     use_strand = use_strand + 1 #if false, factor of 1, if true, factor of 2
     dtypes = guess_numpy_dtypes_from_idxstats( bam_readers, default=None, force_dtype=False )

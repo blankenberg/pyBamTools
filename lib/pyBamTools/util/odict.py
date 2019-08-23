@@ -37,7 +37,7 @@ class odict(UserDict):
         return new
 
     def items( self ):
-        return zip( self._keys, self.values() )
+        return list(zip( self._keys, list(self.values()) ))
 
     def keys( self ):
         return self._keys[:]
@@ -57,11 +57,11 @@ class odict(UserDict):
         return UserDict.setdefault( self, key, failobj )
 
     def update( self, dict ):
-        for ( key, val ) in dict.items():
+        for ( key, val ) in list(dict.items()):
             self.__setitem__( key, val )
 
     def values( self ):
-        return map( self.get, self._keys )
+        return list(map( self.get, self._keys ))
 
     def iterkeys( self ):
         return iter( self._keys )

@@ -71,7 +71,7 @@ class ReadGroupGenotyper( object ):
         self._no_read_group_coverage_reverse = None
         self._has_no_read_groups = False
         self._reference_sequence_filename = reference_sequence_filename
-        self._reference_sequences = IndexedReferenceSequences( reference_sequence_filename, sequence_filter=string.upper )
+        self._reference_sequences = IndexedReferenceSequences( reference_sequence_filename, sequence_filter=str.upper )
         #add seq lengths from fasta index
         for ref_seq_name in self._reference_sequences.get_sequence_names():
             self._sequence_lengths[ ref_seq_name ] = self._reference_sequences.get_sequence_size_by_name( ref_seq_name )
@@ -222,7 +222,7 @@ class ReadGroupGenotyper( object ):
     def iter_coverage( self ):
         for seq_name, start, end in self._restrict_regions.iter_covered_regions():
             for reader in self._readers:
-                bam_read = reader.jump( seq_name, start, next=True )
+                bam_read = reader.jump( seq_name, start, fetch_next=True )
                 if bam_read:
                     overlap = self._process_read( bam_read, seq_name, start, end )
                     while overlap:
@@ -458,7 +458,7 @@ class ReadGroupGenotyper( object ):
             del coverage_dict2
         
         #do some filter on min coverage?
-        coverage = [ ( x[1], x[0] ) for x in sorted( [( x[1], x[0] ) for x in iter(coverage_dict.items())], reverse=True ) if x[1] not in skip_list ] #is ordering important?
+        coverage = sorted(filter( lambda x: x[0] not in skip_list, coverage_dict.items()), key=lambda x: x[1], reverse=True) # is ordering important?
         if position is not None and sequence_name and ( insertion_count or deletion_count ):
             reference_nucleotide, coverage = self._rework_indels( coverage, reference_nucleotide, insertion_count, deletion_count, position, sequence_name )
         return ( reference_nucleotide, coverage )
@@ -523,7 +523,7 @@ class ReadGroupGenotyper( object ):
                 
                 if min_support_depth is None:
                     min_support_depth = 0
-                nucs = sorted( [( x[1], x[0] ) for x in iter(genotyping_coverage_dict.items())], reverse=True )#list of count, nuc
+                nucs = sorted(genotyping_coverage_dict.items(), key=lambda x: x[1], reverse=True ) # list of count, nuc
                 #nucs_reverse = sorted( map( lambda x: ( x[1], x[0] ), coverage_dict_reverse.iteritems() ), reverse=True )#list of count, nuc
                 #nucs = filter( lambda x: not isinstance( x[0], list ), nucs ) #filter out indels for now. FIXME: add sort by len or int count to allow indels here
                 #resolve indels
@@ -534,7 +534,7 @@ class ReadGroupGenotyper( object ):
                 #### below here should make a combined dict for genotyping here, then do both for the raw nuc counts
                 
                 nucs_sum = 0
-                for value, name in nucs:
+                for name, value in nucs:
                     if value >= min_support_depth:
                         if is_integer( name ):
                             #deletion

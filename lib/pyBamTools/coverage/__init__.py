@@ -251,8 +251,8 @@ class NucleotideCoverage( object ):
                     sys.stderr.write( 'The cigar operation "%s" of size "%s" for the read below is unknown.\n%s)\n' % ( cigar_op, cigar_size, read ) )
                     return
     
-    def iteritems( self ):
-        return iter(self._nucleotide_dict.items())
+    def items( self ):
+        return self._nucleotide_dict.items()
     
     def get( self, position, nucleotides=True, insertions=True, deletions=True ):
         nucs = {}

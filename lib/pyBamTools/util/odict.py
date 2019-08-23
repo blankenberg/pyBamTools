@@ -3,7 +3,7 @@
 Ordered dictionary implementation.
 """
 
-from UserDict import UserDict
+from collections import UserDict
 
 class odict(UserDict):
     """
